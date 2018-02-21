@@ -10,7 +10,7 @@ export fit_transform!
 export transform, inverse_transform, fit! # from `Koala`
 
 # for use in this module:
-import Koala: BaseType, params
+import Koala: BaseType, params, type_parameters
 import DataFrames: names, AbstractDataFrame, DataFrame
 import Distributions
 
@@ -140,7 +140,8 @@ mutable struct HotEncodingScheme <: Scheme
     drop_last::Bool
     
     # post-fit parameters:
-    features::Vector{Symbol} # feature names 
+    features::Vector{Symbol} # feature labels
+    spawned_features::Vector{Symbol} # feature labels after one-hot encoding
     values_given_feature::Dict{Symbol,Vector{String}}
 
     fitted::Bool
@@ -159,7 +160,7 @@ function fit!(s::HotEncodingScheme, X::AbstractDataFrame; verbosity=1)
     
     s.features = names(X)
     s.values_given_feature = Dict{Symbol,Vector{String}}()
-
+    
     for ft in s.features 
         if eltype(X[ft]) <: AbstractString
             s.values_given_feature[ft] = sort!(unique(X[ft]))
@@ -175,7 +176,27 @@ function fit!(s::HotEncodingScheme, X::AbstractDataFrame; verbosity=1)
                  "is being ignored. To be hot-encoded "*
                  "it must first be converted to some AbstractString type.")
         end  
-    end 
+    end
+
+    s.spawned_features = Symbol[]
+
+    for ft in s.features
+        if eltype(X[ft]) <: AbstractString
+            for value in s.values_given_feature[ft]
+                subft = Symbol(string(ft,"__",value))
+
+                # in (rare) case subft is not a new feature name:
+                while subft in s.features
+                    subft = Symbol(string(subft,"_"))
+                end
+
+                push!(s.spawned_features, subft)
+            end
+        else
+            push!(s.spawned_features, ft)
+        end
+    end
+    
 
     s.fitted = true
     return s
