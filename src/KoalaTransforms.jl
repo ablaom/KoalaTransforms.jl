@@ -1,13 +1,13 @@
 module KoalaTransforms
 
 # new:
-export UnivariateStandardizationScheme
+export UnivariateStandardizer
 export HotEncodingScheme
 export UnivariateBoxCoxScheme, BoxCoxScheme
 export fit_transform!
 
 # extended:
-export transform, inverse_transform, fit! # from `Koala`
+export transform, inverse_transform, fit # from `Koala`
 
 # for use in this module:
 import Koala: BaseType, params, type_parameters
@@ -15,160 +15,73 @@ import DataFrames: names, AbstractDataFrame, DataFrame
 import Distributions
 
 # to be extended:
-import Koala: transform, fit!, inverse_transform
+import Koala: transform, fit, inverse_transform
 import Base: show, showall
 
 # constants:
 const N_VALUES_THRESH = 16
 
 
-## Abstract types
+## Univariate standardization 
 
-abstract type Scheme <: BaseType
+struct UnivariateStandardizer <: Transformer end
+
+function fit(transformer::UnivariateStandardizer, v::AbstractVector{T},
+             parallel, verbosity) where T <: Real
+    return  mean(v), std(v)
 end
 
-
-## Checklist for new schemes
-
-# - make subtype of `Scheme`.
-#
-# - If a scheme is already fitted, then a warning should be issued if fit again
-#
-# - Don't forget to set `fitted = true` at end of `fit!` definition
-#
-# - For each scheme type `S` provide a constructor of the form
-#      function S(X; verbosity=1, args...)
-#          s = S(args...)
-#          fit!(s, X; verbosity=verbosity)
-#          return s
-#      end
-#
-# - Every `fit!` method should have a `verbosity=1` keyword argument
-#   and every method calling `fit!` should
-#   accept `verbosity=1` as  a keyword and pass to the `fit!` call.
-
-
-## Fall-back methods
-
-function fit_transform!(s::Scheme, x; verbosity=1)
-    fit!(s, x; verbosity=verbosity)
-    return transform(s, x)
+# for transforming single value:
+function transform(transformer::UnivariateStandardizer, scheme, x::Real)
+    mu, sigma = scheme
+    return (x - mu)/sigma
 end
 
-function Base.show(stream::IO, s::Scheme)
-    abbreviated(n) = "..."*string(n)[end-2:end]
-    type_params = type_parameters(s)
-    prefix = (s.fitted ? "" : "unfitted ") 
-    if isempty(type_params)
-        type_string = ""
-    else
-        type_string = string("{", ["$T," for T in type_params]..., "}")
-    end
-    print(stream, string(prefix, typeof(s).name.name,
-                         type_string,
-                         "@", abbreviated(hash(s))))
+# for transforming vector:
+transform(transformer::UnivariateStandardizer, scheme,
+          v::AbstractVector{T}) where T <: Real =
+              [transform(transformer, scheme, x) for x in v]
+
+# for single values:
+function inverse_transform(transformer::UnivariateStandardizer, scheme, y::Real)
+    mu, sigma = scheme
+    return mu + y*sigma
 end
 
-## `UnivariateStandardizationScheme`
-
-mutable struct UnivariateStandardizationScheme <: Scheme
-    
-    # hyperparameters: None
-    
-    # post-fit parameters:
-    mu::Float64
-    sigma::Float64
-
-    fitted::Bool
-
-    function UnivariateStandardizationScheme()
-        ret = new()
-        ret.fitted = false
-        return ret
-    end
-    
-end
-
-function fit!(s::UnivariateStandardizationScheme, v::AbstractVector{T};
-              verbosity=1) where T <: Real
-
-    !s.fitted || warn("Refitting a previously trained transformation scheme.")
-
-    s.mu, s.sigma = (mean(v), std(v))
-    s.fitted = true
-    return s
-
-end
-
-function transform(s::UnivariateStandardizationScheme, x:: Real)
-    if !s.fitted
-        throw(Base.error("Attempting to transform according to unfitted scheme."))
-    end
-    return (x - s.mu)/s.sigma
-end
-
-transform(s::UnivariateStandardizationScheme, v::AbstractVector{T} where T <: Real) =
-    [transform(s,x) for x in v]
-
-function inverse_transform(s::UnivariateStandardizationScheme, y::Real)
-    s.fitted || error("Attempting to transform according to unfitted scheme.")
-    return s.mu + y*s.sigma
-end
-
-inverse_transform(s::UnivariateStandardizationScheme,
-                  w::AbstractVector{T} where T <: Real) =
-                      [inverse_transform(s,y) for y in w]
-
-function fit_transform!(s::UnivariateStandardizationScheme,
-                        v::AbstractVector{T}; verbosity=1) where T <: Real
-    fit!(s, v; verbosity=verbosity)
-    return transform(s, v)
-end
-
-function UnivariateStandardizationScheme(v::AbstractVector{T};
-                                         verbosity=1, args...) where T <: Real
-    s = UnivariateStandardizationScheme(; args...)
-    return fit!(s, v; verbosity=verbosity)
-end
+# for vectors:
+inverse_transform(transformer::UnivariateStandardizer, scheme,
+                  w::AbstractVector{T}) where T <: Real =
+                      [inverse_transform(transformer, scheme, y) for y in w]
 
 
-## `HotEncodingScheme`
+## One-hot encoding
 
-mutable struct HotEncodingScheme <: Scheme
-    
-    # hyperparameters:
+struct OneHotEncoder <: Transformer
     drop_last::Bool
-    
-    # post-fit parameters:
-    features::Vector{Symbol} # feature labels
+end
+
+# lazy keyword constructor:
+OneHotEncoder(;drop_last::Bool=false)
+
+struct OneHotEncoderScheme
+    features::Vector{Symbol}         # feature labels
     spawned_features::Vector{Symbol} # feature labels after one-hot encoding
     values_given_feature::Dict{Symbol,Vector{String}}
-
-    fitted::Bool
-
-    function HotEncodingScheme(;drop_last::Bool=false)
-        ret = new(drop_last)
-        ret.fitted = false
-        return ret
-    end
-
 end
 
-function fit!(s::HotEncodingScheme, X::AbstractDataFrame; verbosity=1)
+function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosity)
 
-    !s.fitted || warn("Refitting an existing transformation scheme.")
-    
-    s.features = names(X)
-    s.values_given_feature = Dict{Symbol,Vector{String}}()
-    
-    for ft in s.features 
+    features = names(X)
+    values_given_feature = Dict{Symbol,Vector{String}}()
+        
+    for ft in features 
         if eltype(X[ft]) <: AbstractString
-            s.values_given_feature[ft] = sort!(unique(X[ft]))
-            if s.drop_last
-                s.values_given_feature[ft] = s.values_given_feature[ft][1:(end - 1)]
+            values_given_feature[ft] = sort!(unique(X[ft]))
+            if transformer.drop_last
+                values_given_feature[ft] = values_given_feature[ft][1:(end - 1)]
             end
             if verbosity > 0
-                n_values = length(keys(s.values_given_feature[ft]))
+                n_values = length(keys(values_given_feature[ft]))
                 println("Spawned $n_values columns to hot-encode $ft.")
             end
         elseif eltype(X[ft]) == Char
@@ -178,41 +91,42 @@ function fit!(s::HotEncodingScheme, X::AbstractDataFrame; verbosity=1)
         end  
     end
 
-    s.spawned_features = Symbol[]
+    spawned_features = Symbol[]
 
-    for ft in s.features
+    for ft in features
         if eltype(X[ft]) <: AbstractString
-            for value in s.values_given_feature[ft]
+            for value in values_given_feature[ft]
                 subft = Symbol(string(ft,"__",value))
 
-                # in (rare) case subft is not a new feature name:
-                while subft in s.features
+                # in (rare) case subft is not a new feature label:
+                while subft in features
                     subft = Symbol(string(subft,"_"))
                 end
 
-                push!(s.spawned_features, subft)
+                push!(spawned_features, subft)
             end
         else
-            push!(s.spawned_features, ft)
+            push!(spawned_features, ft)
         end
     end
-    
 
-    s.fitted = true
-    return s
+    return HotEncoderScheme(features, spawned_features, values_given_feature)
+    
 end
 
-function transform(s::HotEncodingScheme, X::AbstractDataFrame)
-    s.fitted || error("Cannot transform according to unfitted scheme.")
+function transform(transformer::OneHotEncoder, scheme, X::AbstractDataFrame)
 
+    Set(names(X)) == Set(scheme.features) ||
+        error("Attempting to transform DataFrame with incompatible feature labels.")
+    
     Xout = DataFrame()
-    for ft in s.features
+    for ft in scheme.features
         if eltype(X[ft]) <: AbstractString
-            for value in s.values_given_feature[ft]
+            for value in scheme.values_given_feature[ft]
                 subft = Symbol(string(ft,"__",value))
 
                 # in case subft is not a new feature name:
-                while subft in s.features
+                while subft in scheme.features
                     subft = Symbol(string(subft,"_"))
                 end
 
@@ -225,15 +139,11 @@ function transform(s::HotEncodingScheme, X::AbstractDataFrame)
         end
     end
     return Xout
-end
 
-function HotEncodingScheme(X::AbstractDataFrame; verbosity=1, args...)
-    s = HotEncodingScheme(;args...)
-    return fit!(s, X; verbosity=verbosity)
 end
 
 
-## `UnivariateBoxCoxScheme`
+## Univariate Box-Cox transformations
 
 function normalise(v)
     map(v) do x
@@ -264,7 +174,7 @@ function normality(v)
 
 end
 
-function boxcox{T<:Real}(lambda, c, x::T)
+function boxcox(lambda, c, x::Real) 
     c + x >= 0 || throw(DomainError)
     if lambda == 0.0
         c + x > 0 || throw(DomainError)
@@ -273,29 +183,12 @@ function boxcox{T<:Real}(lambda, c, x::T)
     return ((c + x)^lambda - 1)/lambda
 end
 
-boxcox(lambda, c, v::Vector) = [boxcox(lambda, c, x) for x in v]    
+boxcox(lambda, c, v::AbstractVector{T}) where T <: Real =
+    [boxcox(lambda, c, x) for x in v]    
 
-function boxcox(v::Vector; n=171, shift::Bool = false)
-    m = minimum(v)
-    m >= 0 || error("Cannot perform a BoxCox transformation on negative data.")
-
-    c = 0.0 # default
-    if shift
-        if m == 0
-            c = 0.2*mean(v)
-        end
-    else
-        m != 0 || throw(DomainError) 
-    end
-  
-    lambdas = linspace(-0.4,3,n)
-    scores = [normality(boxcox(l, c, v)) for l in lambdas]
-    lambda = lambdas[indmax(scores)]
-    return  lambda, c, boxcox(lambda, c, v)
-end
 
 """
-## `mutable struct UnivariateBoxCoxScheme`
+## `struct UnivariateBoxCoxTransformer`
 
 A type for encoding a Box-Cox transformation of a single variable
 taking non-negative values, with a possible preliminary shift. Such a
@@ -306,119 +199,94 @@ transformation is of the form
 
 ###  Usage
 
-    `s = UnivariateBoxCoxScheme(; n=171, shift=false)`
+    `trf = UnivariateBoxCoxTransformer(; n=171, shift=false)`
 
-Returns an unfitted wrapper that on fitting to data (see below) will
-try `n` different values of the Box-Cox exponent λ (between `-0.4` and
-`3`) to find an optimal value, stored as the post-fit parameter
-`s.lambda`. If `shift=true` and zero values are encountered in the
-data then the transformation sought includes a preliminary positive
-shift, stored as `s.c`. The value of the shift is always `0.2` times
-the data mean. If there are no zero values, then `s.c=0`.
-
-    `fit!(s, v)`
-
-Attempts fit an `UnivariateBoxCoxScheme` instance `s` to a
-vector `v` (eltype `Real`). The elements of `v` must
-all be positive, or a `DomainError` will be thrown. If `s.shift=true`
-zero-valued elements are allowed as discussed above. 
-
-    `s = UnivariateBoxCoxScheme(v; n=171, shift=false)`
-
-Combines the previous two steps into one.
-
-    `w = transform(s, v)`
-
-Transforms the vector `v` according to the Box-Cox transformation
-encoded in the `UnivariateBoxCoxScheme` instance `s` (which must be
-first fitted to some data). Stores the answer as `w`.
+Returns transformer that on fitting to data (see below) will try `n`
+different values of the Box-Cox exponent λ (between `-0.4` and `3`) to
+find an optimal value. If `shift=true` and zero values are encountered
+in the data then the transformation sought includes a preliminary
+positive shift by `0.2` times the data mean. If there are no zero
+values, then `s.c=0`.
 
 See also `BoxCoxScheme` a transformer for selected ordinals in a DataFrame. 
 
 """
-mutable struct UnivariateBoxCoxScheme <: Scheme
-    
-    # hyperparameters
+struct UnivariateBoxCoxTransformer <: Transformer
     n::Int      # nbr values tried in optimizing exponent lambda
     shift::Bool # whether to shift data away from zero
-    
-    # post-fit parameters:
-    lambda::Float64
-    c::Float64
-
-    function UnivariateBoxCoxScheme(n::Int, shift::Bool)
-        ret = new(n, shift)
-        ret.c = -1.0 # indicating scheme not yet fitted
-        return ret
-    end
-    
 end
 
-UnivariateBoxCoxScheme(; n=171, shift=false) = UnivariateBoxCoxScheme(n, shift)
+# lazy keyword constructor:
+UnivariateBoxCoxTransformer(; n=171, shift=false) = UnivariateBoxCoxTransformer(n, shift)
 
+function fit(transformer::UnivariateBoxCoxTransformer, v::AbstractVector{T},
+    parallel, verbosity) where T <: Real 
 
-function show(stream::IO, s::UnivariateBoxCoxScheme)
-    if s.c >= 0
-        print(stream, "UnivariateBoxCoxScheme($(s.lambda), $(s.c))")
+    m = minimum(v)
+    m >= 0 || error("Cannot perform a Box-Cox transformation on negative data.")
+
+    c = 0.0 # default
+    if transformer.shift
+        if m == 0
+            c = 0.2*mean(v)
+        end
     else
-        print(stream, "unfitted UnivariateBoxCoxScheme()")
+        m != 0 || error("Zero value encountered in data being Box-Cox transformed.\n"*
+                        "Consider calling `fit!` with `shift=true`.")
     end
+  
+    lambdas = linspace(-0.4,3,n)
+    scores = Float64[normality(boxcox(l, c, v)) for l in lambdas]
+    lambda = lambdas[indmax(scores)]
+
+    return  lambda, c
+
 end
 
-function fit!(s::UnivariateBoxCoxScheme, v::Vector; verbosity=1)
-    s.c < 0 ||
-        warn("Refitting a previously trained transformation scheme.")   
-    s.lambda, s.c, _ = boxcox(v; n=s.n, shift=s.shift)
-    return s
-end
+# for X scalar or vector:
+transform(transformer::UnivariateBoxCoxTransformer, scheme, X) =
+    boxcox(scheme..., X) 
 
-function UnivariateBoxCoxScheme(v::Vector; verbosity=1, args...)
-    s = UnivariateBoxCoxScheme(; args...)
-    return fit!(s, v; verbosity=verbosity)
-end
-
-function transform(s::UnivariateBoxCoxScheme, x::T) where T <: Real
-    if s.c < 0
-        throw(Base.error("Attempting to transform according to unfitted scheme."))
-    end
-    return boxcox(s.lambda, s.c, x)
-end
-
-function inverse_transform(s::UnivariateBoxCoxScheme, x::T) where  T <:Real
-    if s.c < 0
-        throw(Base.error("Attempting to transform according to unfitted scheme."))
-    end
-    if s.lambda == 0
-        return exp(x) - s.c
+# scalar case:
+function inverse_transform(transformer::UnivariateBoxCoxTransformer,
+                           scheme, x::Real)
+    lambda, c = scheme
+    if lambda == 0
+        return exp(x) - c
     else
-        return (s.lambda*x + 1)^(1/s.lambda) - s.c
+        return (lambda*x + 1)^(1/lambda) - c
     end
 end
 
-transform(s::UnivariateBoxCoxScheme, v::AbstractVector) = boxcox(s.lambda, s.c, v)
-
-inverse_transform(s::UnivariateBoxCoxScheme,
-                  v::AbstractVector) = [inverse_transform(s,y) for y in v]
+# vector case:
+function inverse_transform(transformer::UnivariateBoxCoxTransformer,
+                           scheme, w::AbstractVector{T}) where T <: Real
+    return [inverse_transform(transformer,y) for y in w]
+end
 
 
 ## `BoxCoxScheme` 
 
 """
-## `mutable struct BoxCoxScheme`
+## `struct BoxCoxTransformer`
 
-Type for encoding Box-Cox transformations to each ordinal fields of a
+Transformer for Box-Cox transformations on each ordinal feature of a
 `DataFrame` object.
 
 ### Method calls 
 
-To calculate the compute Box-Cox transformation schemes for a data frame `X`:
+To calculate the compute Box-Cox transformations of a DataFrame `X`
+and transform a new DataFrame `Y` according to the same
+transformations:
 
-    julia> s = BoxCoxScheme(X)    
-    julia> XX = transform(s, Y) # transform data frame `Y` according to the scheme `s`
+    julia> transformer = BoxCoxTransformer()    
+    julia> transformerM = TransformerMachine(transformer, X)
+    julia> transform(transformerM, Y)
     
-### Keyword arguments
+### Transformer parameters
 
-Calls to the first method above may be issued with the following keyword arguments:
+Calls to the first method above may be issued with the following
+keyword arguments, with defaluts as indicated:
 
 - `shift=true`: allow data shift in case of fields taking zero values
 (otherwise no transformation will be applied).
@@ -427,122 +295,113 @@ Calls to the first method above may be issued with the following keyword argumen
 
 ## See also
 
-`UnivariateBoxCoxScheme`: The single variable version of the scheme
-implemented by `BoxCoxScheme`.
+`UnivariateBoxCoxTransformer`: The single variable version of the same transformer.
 
 """
-
-mutable struct BoxCoxScheme <: Scheme
-
-    # hyperparameters:
+struct BoxCoxTransformer <: Transformer
     n::Int                     # number of values considered in exponent optimizations
     shift::Bool                # whether or not to shift features taking zero as value
     features::Vector{Symbol}   # features to attempt fitting a
-                               # transformation (empty means all)
-    
-    # post-fit parameters:
-    schemes::Vector{UnivariateBoxCoxScheme}
+                                      # transformation (empty means all)
+end
+
+# lazy keyword constructor:
+BoxCoxTransformer(; n=171, shift = false, features=Symbol[]) =
+    BoxCoxTransformer(n, shift, features)
+
+struct BoxCoxTransformerScheme
+    schemes::Matrix{Float64} # each col is a [lambda, c]' pair; one col per feature
+    features::Vector{Symbol} # all features in the dataframe that was fit
     feature_is_transformed::Vector{Bool} # keep track of which features are transformed
-
-    fitted::Bool
-    
-    function BoxCoxScheme(n::Int, shift::Bool, features::Vector{Symbol})
-        ret = new(n, shift, features)
-        ret.fitted = false
-        return ret
-    end
-    
 end
 
-BoxCoxScheme(; n=171, shift = false, features=Symbol[]) = BoxCoxScheme(n, shift, features)
-
-function BoxCoxScheme(X; verbosity=1, args...)
-    s =  BoxCoxScheme(; args...)
-    fit!(s, X, verbosity=verbosity) # defined below
-    return s
-end
-
-
-
-function fit!(s::BoxCoxScheme, X::AbstractDataFrame; verbosity=1)
-
-    !s.fitted || warn("Refitting a previously trained transformation
-     scheme.")
+function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
 
     # determine indices of features to be transformed
-    features_to_try = (isempty(s.features) ? names(X) : s.features)
-    s.feature_is_transformed = Array{Bool}(size(X, 2))
+    features_to_try = (isempty(transformed.features) ? names(X) : transformed.features)
+    feature_is_transformed = Array{Bool}(size(X, 2))
     for j in 1:size(X, 2)
         if names(X)[j] in features_to_try && eltype(X[j]) <: Real && minimum(X[j]) >= 0
-            s.feature_is_transformed[j] = true
+            feature_is_transformed[j] = true
         else
-            s.feature_is_transformed[j] = false
+            feature_is_transformed[j] = false
         end
     end
 
     # fit each of those features with best Box Cox transformation
-    s.schemes = Array{UnivariateBoxCoxScheme}(size(X, 2))
+    schemes = Array{Float64}(size(X,2), 2)
+    univ_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift,
+                                               n=transformer.n)
     verbosity < 1 ||
         println("Box-Cox transformations: ")
     for j in 1:size(X,2)
-        if s.feature_is_transformed[j]
-            if minimum(X[j]) == 0 && !s.shift
+        if feature_is_transformed[j]
+            if minimum(X[j]) == 0 && !transformer.shift
                 verbosity < 1 ||
                     println("  :$(names(X)[j])    "*
                             "(*not* transformed, contains zero values)")
-                s.feature_is_transformed[j] = false
-                s.schemes[j] = UnivariateBoxCoxScheme()
+                feature_is_transformed[j] = false
+                schemes[:,j] = [0.0, 0.0]
             else
                 n_values = length(unique(X[j]))
                 if n_values < N_VALUES_THRESH
                     verbosity < 1 ||
                         println("  :$(names(X)[j])    "*
                                 "(*not* transformed, less than $N_VALUES_THRESH values)")
-                    s.feature_is_transformed[j] = false
-                    s.schemes[j] = UnivariateBoxCoxScheme()
-                else                    
-                    uscheme = UnivariateBoxCoxScheme(collect(X[j]); shift=s.shift, n=s.n)
-                    if uscheme.lambda in [-0.4, 3]
+                    feature_is_transformed[j] = false
+                    schemes[:,j] = [0.0, 0.0]
+                else
+                    lambda, c = fit(univ_transformer, collect(X[j]), true, verbosity-1)
+                    if lambda in [-0.4, 3]
                         verbosity < 1 ||
                             println("  :$(names(X)[j])    "*
                                     "(*not* transformed, lambda too extreme)")
-                        s.feature_is_transformed[j] = false
-                        s.schemes[j] = UnivariateBoxCoxScheme()
-                    elseif uscheme.lambda == 1.0
+                        feature_is_transformed[j] = false
+                        schemes[:,j] = [0.0, 0.0]
+                    elseif lambda == 1.0
                         verbosity < 1 ||
                             println("  :$(names(X)[j])    "*
                                     "(*not* transformed, not skewed)")
-                        s.feature_is_transformed[j] = false
-                        s.schemes[j] = UnivariateBoxCoxScheme()
+                        feature_is_transformed[j] = false
+                        schemes[:,j] = [0.0, 0.0]
                     else
-                        s.schemes[j] = uscheme
+                        schemes[:,j] = [lambda, c]
                         verbosity <1 ||
-                            println("  :$(names(X)[j])    "*
-                                    "lambda=$(s.schemes[j].lambda)  "*
-                                    "shift=$(s.schemes[j].c)")
+                            println("  :$(names(X)[j])    lambda=$lambda  "*
+                                    "shift=$c")
                     end
                 end
             end
         else
-            s.schemes[j] = UnivariateBoxCoxScheme()
+            schemes[:,j] = [0.0, 0.0]
         end
     end
 
-    if !s.shift && verbosity < 1
+    if !transformer.shift && verbosity < 1
         info("To transform non-negative features with zero values use shift=true.")
     end
-    
-    s.fitted = true
-    
-    return s
+
+    return BoxCoxTransformerScheme(schemes, names(X), feature_is_transformed)
+
 end
 
-function transform(s::BoxCoxScheme, X::AbstractDataFrame)
+function transform(transformer::BoxCoxTransformer, scheme, X::AbstractDataFrame)
+
+    names(X) == scheme.features ||
+        error("Attempting to transform a data frame with  "*
+              "incompatible feature labels.")
+    
+    univ_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift,
+                                               n=transformer.n)
+
     Xnew = copy(X)
     for j in 1:size(X, 2)
-        if s.feature_is_transformed[j]
+        if scheme.feature_is_transformed[j]
             try
-                Xnew[j] = transform(s.schemes[j], collect(X[j]))
+                # extract the (lambda, c) pair:
+                univ_scheme = (scheme.schemes[1,j], scheme.schemes[2,j])  
+
+                Xnew[j] = transform(univ_transformer, univ_scheme, collect(X[j]))
             catch DomainError
                 warn("Data outside of the domain of the fitted Box-Cox"*
                       " transformation scheme encountered in feature "*
@@ -551,7 +410,10 @@ function transform(s::BoxCoxScheme, X::AbstractDataFrame)
         end
     end
     return Xnew
-end
+    
 
+inverse_transform(transformer::BoxCoxTransformer, scheme, Xt) -> Xt
+
+    
 
 end # module
