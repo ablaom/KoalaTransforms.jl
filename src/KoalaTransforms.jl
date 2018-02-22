@@ -2,9 +2,8 @@ module KoalaTransforms
 
 # new:
 export UnivariateStandardizer
-export HotEncodingScheme
-export UnivariateBoxCoxScheme, BoxCoxScheme
-export fit_transform!
+export OneHotEncoder
+export UnivariateBoxCoxTransformer, BoxCoxTransformer
 
 # extended:
 export transform, inverse_transform, fit # from `Koala`
@@ -15,7 +14,7 @@ import DataFrames: names, AbstractDataFrame, DataFrame
 import Distributions
 
 # to be extended:
-import Koala: transform, fit, inverse_transform
+import Koala: Transformer, transform, fit, inverse_transform
 import Base: show, showall
 
 # constants:
@@ -61,7 +60,7 @@ struct OneHotEncoder <: Transformer
 end
 
 # lazy keyword constructor:
-OneHotEncoder(;drop_last::Bool=false)
+OneHotEncoder(; drop_last::Bool=false) = OneHotEncoder(drop_last)
 
 struct OneHotEncoderScheme
     features::Vector{Symbol}         # feature labels
@@ -110,7 +109,7 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
         end
     end
 
-    return HotEncoderScheme(features, spawned_features, values_given_feature)
+    return OneHotEncoderScheme(features, spawned_features, values_given_feature)
     
 end
 
@@ -235,7 +234,7 @@ function fit(transformer::UnivariateBoxCoxTransformer, v::AbstractVector{T},
                         "Consider calling `fit!` with `shift=true`.")
     end
   
-    lambdas = linspace(-0.4,3,n)
+    lambdas = linspace(-0.4,3,transformer.n)
     scores = Float64[normality(boxcox(l, c, v)) for l in lambdas]
     lambda = lambdas[indmax(scores)]
 
@@ -261,7 +260,7 @@ end
 # vector case:
 function inverse_transform(transformer::UnivariateBoxCoxTransformer,
                            scheme, w::AbstractVector{T}) where T <: Real
-    return [inverse_transform(transformer,y) for y in w]
+    return [inverse_transform(transformer, scheme, y) for y in w]
 end
 
 
@@ -302,7 +301,7 @@ struct BoxCoxTransformer <: Transformer
     n::Int                     # number of values considered in exponent optimizations
     shift::Bool                # whether or not to shift features taking zero as value
     features::Vector{Symbol}   # features to attempt fitting a
-                                      # transformation (empty means all)
+                               # transformation to (empty means all)
 end
 
 # lazy keyword constructor:
@@ -318,7 +317,7 @@ end
 function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
 
     # determine indices of features to be transformed
-    features_to_try = (isempty(transformed.features) ? names(X) : transformed.features)
+    features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
     feature_is_transformed = Array{Bool}(size(X, 2))
     for j in 1:size(X, 2)
         if names(X)[j] in features_to_try && eltype(X[j]) <: Real && minimum(X[j]) >= 0
@@ -329,7 +328,7 @@ function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
     end
 
     # fit each of those features with best Box Cox transformation
-    schemes = Array{Float64}(size(X,2), 2)
+    schemes = Array{Float64}(2, size(X,2))
     univ_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift,
                                                n=transformer.n)
     verbosity < 1 ||
@@ -409,11 +408,10 @@ function transform(transformer::BoxCoxTransformer, scheme, X::AbstractDataFrame)
             end
         end
     end
+
     return Xnew
-    
 
-inverse_transform(transformer::BoxCoxTransformer, scheme, Xt) -> Xt
+end
 
-    
 
 end # module
