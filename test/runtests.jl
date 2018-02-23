@@ -8,7 +8,7 @@ const EPS = eps(Float64)
 
 t = UnivariateStandardizer()
 showall(t)
-tM = TransformerMachine(t, [0, 2, 4])
+tM = Machine(t, [0, 2, 4])
 showall(tM)
 
 @test round.(Int, transform(tM, [0,4,8])) == [-1.0,1.0,3.0]
@@ -21,21 +21,31 @@ KoalaTransforms.normality(v)
 
 t = UnivariateBoxCoxTransformer(shift=true)
 showall(t)
-tM = TransformerMachine(t, v)
+tM = Machine(t, v)
 @test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
 X, y = load_ames();
 
+## Standardizer for data frames
+
+t = Standardizer()
+tM = Machine(t, X)
+transform(tM, X)
+
+t = Standardizer(features=[:GrLivArea])
+tM = Machine(t, X)
+transform(tM, X)
+
 t = OneHotEncoder(drop_last=true)
-tM = TransformerMachine(t, X)
+tM = Machine(t, X)
 Xt = transform(tM, X)
 
 t = BoxCoxTransformer(shift=true)
-tM = TransformerMachine(t, X)
+tM = Machine(t, X)
 transform(tM, X)
 
 t = BoxCoxTransformer(shift=true, features=[:GrLivArea])
-tM = TransformerMachine(t, X)
+tM = Machine(t, X)
 Xt = transform(tM, X)
 
 

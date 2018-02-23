@@ -1,7 +1,7 @@
 module KoalaTransforms
 
 # new:
-export UnivariateStandardizer
+export UnivariateStandardizer, Standardizer
 export OneHotEncoder
 export UnivariateBoxCoxTransformer, BoxCoxTransformer
 
@@ -53,6 +53,71 @@ inverse_transform(transformer::UnivariateStandardizer, scheme,
                       [inverse_transform(transformer, scheme, y) for y in w]
 
 
+## Standardization of ordinal features of a DataFrame
+
+struct Standardizer <: Transformer
+    features::Vector{Symbol} # features to be standardized; empty means all
+end
+
+# lazy keyword constructor:
+Standardizer(; features=Symbol[]) = Standardizer(features)
+
+struct StandardizerScheme <: BaseType
+    schemes::Matrix{Float64}
+    features::Vector{Symbol} # all the feature labels of the data frame fitted
+    is_transformed::Vector{Bool}
+end
+
+function fit(transformer::Standardizer, X, parallel, verbosity)
+    
+    # determine indices of features to be transformed
+    features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
+    is_transformed = Array{Bool}(size(X, 2))
+    for j in 1:size(X, 2)
+        if names(X)[j] in features_to_try && eltype(X[j]) <: Real
+            is_transformed[j] = true
+        else
+            is_transformed[j] = false
+        end
+    end
+
+    # fit each of those features
+    schemes = Matrix{Float64}(2, size(X, 2))
+    verbosity < 1 || println("Features standarized: ")
+    univ_transformer = UnivariateStandardizer()
+    for j in 1:size(X, 2)
+        if is_transformed[j]
+            schemes[:,j] = [fit(univ_transformer, collect(X[j]), true, verbosity - 1)...]
+            verbosity < 1 ||
+                println("  :$(names(X)[j])    mu=$(schemes[1,j])  sigma=$(schemes[2,j])")
+        else
+            schemes[:,j] = Float64[0.0, 0.0]
+        end
+    end
+
+    return StandardizerScheme(schemes, names(X), is_transformed)
+    
+end
+
+function transform(transformer::Standardizer, scheme, X)
+
+    names(X) == scheme.features ||
+        error("Attempting to transform data frame with incompatible feature labels.")
+
+    Xnew = copy(X)
+    univ_transformer = UnivariateStandardizer()
+    for j in 1:size(X, 2)
+        if scheme.is_transformed[j]
+            # extract the (mu, sigma) pair:
+            univ_scheme = (scheme.schemes[1,j], scheme.schemes[2,j])  
+            Xnew[j] = transform(univ_transformer, univ_scheme, collect(X[j]))
+        end
+    end
+    return Xnew
+
+end    
+
+
 ## One-hot encoding
 
 struct OneHotEncoder <: Transformer
@@ -62,7 +127,7 @@ end
 # lazy keyword constructor:
 OneHotEncoder(; drop_last::Bool=false) = OneHotEncoder(drop_last)
 
-struct OneHotEncoderScheme
+struct OneHotEncoderScheme <: BaseType
     features::Vector{Symbol}         # feature labels
     spawned_features::Vector{Symbol} # feature labels after one-hot encoding
     values_given_feature::Dict{Symbol,Vector{String}}
@@ -308,7 +373,7 @@ end
 BoxCoxTransformer(; n=171, shift = false, features=Symbol[]) =
     BoxCoxTransformer(n, shift, features)
 
-struct BoxCoxTransformerScheme
+struct BoxCoxTransformerScheme <: BaseType
     schemes::Matrix{Float64} # each col is a [lambda, c]' pair; one col per feature
     features::Vector{Symbol} # all features in the dataframe that was fit
     feature_is_transformed::Vector{Bool} # keep track of which features are transformed
