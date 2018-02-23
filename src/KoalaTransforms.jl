@@ -8,6 +8,9 @@ export UnivariateBoxCoxTransformer, BoxCoxTransformer
 # extended:
 export transform, inverse_transform, fit # from `Koala`
 
+# transformers rexported from Koala:
+export FeatureTruncater, DataFrameToArrayTransformer, IdentityTransformer
+
 # for use in this module:
 import Koala: BaseType, params, type_parameters
 import DataFrames: names, AbstractDataFrame, DataFrame
@@ -16,6 +19,9 @@ import Distributions
 # to be extended:
 import Koala: Transformer, transform, fit, inverse_transform
 import Base: show, showall
+
+# to be reexported:
+import Koala: FeatureTruncater, DataFrameToArrayTransformer, IdentityTransformer
 
 # constants:
 const N_VALUES_THRESH = 16
@@ -378,6 +384,9 @@ struct BoxCoxTransformerScheme <: BaseType
     features::Vector{Symbol} # all features in the dataframe that was fit
     feature_is_transformed::Vector{Bool} # keep track of which features are transformed
 end
+
+# null scheme:
+BoxCoxTransformerScheme() = BoxCoxTransformer(zeros(0,0),Symbol[],Bool[])
 
 function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
 
