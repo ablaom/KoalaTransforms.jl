@@ -26,6 +26,10 @@ tM = Machine(t, v)
 
 X, y = load_ames();
 
+transformer = DataFrameToArrayTransformer(features=[:OverallQual, :GrLivArea])
+transformerM = Machine(transformer, X)
+@test transform(transformerM, X) == Array(X[[:OverallQual, :GrLivArea]])
+
 ## Standardizer for data frames
 
 t = Standardizer()

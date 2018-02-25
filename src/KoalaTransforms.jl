@@ -20,11 +20,31 @@ import Distributions
 import Koala: Transformer, transform, fit, inverse_transform
 import Base: show, showall
 
-# to be reexported:
-import Koala: FeatureTruncater, DataFrameToArrayTransformer, IdentityTransformer
+# to be exported from Koala.jl:
+import Koala: NullTransformer, FeatureTruncater
+import Koala: IdentityTransformer
 
 # constants:
 const N_VALUES_THRESH = 16
+
+
+## Converting DataFrames with ordinal features into arrays
+
+mutable struct DataFrameToArrayTransformer <: Transformer
+    features::Vector{Symbol} # empty means use all
+end
+DataFrameToArrayTransformer(;features=Symbol[]) = DataFrameToArrayTransformer(features)
+function fit(transformer::DataFrameToArrayTransformer, X, parallel, verbosity)
+    if isempty(transformer.features)
+        return names(X)
+    else
+        return transformer.features
+    end
+end
+function transform(transformer::DataFrameToArrayTransformer, scheme, X)
+    issubset(Set(scheme), Set(names(X))) || throw(DomainError)
+    return convert(Array{Float64}, X[scheme])
+end 
 
 
 ## Univariate standardization 
@@ -61,7 +81,7 @@ inverse_transform(transformer::UnivariateStandardizer, scheme,
 
 ## Standardization of ordinal features of a DataFrame
 
-struct Standardizer <: Transformer
+mutable struct Standardizer <: Transformer
     features::Vector{Symbol} # features to be standardized; empty means all
 end
 
@@ -126,7 +146,7 @@ end
 
 ## One-hot encoding
 
-struct OneHotEncoder <: Transformer
+mutable struct OneHotEncoder <: Transformer
     drop_last::Bool
 end
 
@@ -281,7 +301,7 @@ values, then `s.c=0`.
 See also `BoxCoxScheme` a transformer for selected ordinals in a DataFrame. 
 
 """
-struct UnivariateBoxCoxTransformer <: Transformer
+mutable struct UnivariateBoxCoxTransformer <: Transformer
     n::Int      # nbr values tried in optimizing exponent lambda
     shift::Bool # whether to shift data away from zero
 end
@@ -368,7 +388,7 @@ keyword arguments, with defaluts as indicated:
 `UnivariateBoxCoxTransformer`: The single variable version of the same transformer.
 
 """
-struct BoxCoxTransformer <: Transformer
+mutable struct BoxCoxTransformer <: Transformer
     n::Int                     # number of values considered in exponent optimizations
     shift::Bool                # whether or not to shift features taking zero as value
     features::Vector{Symbol}   # features to attempt fitting a
@@ -386,7 +406,7 @@ struct BoxCoxTransformerScheme <: BaseType
 end
 
 # null scheme:
-BoxCoxTransformerScheme() = BoxCoxTransformer(zeros(0,0),Symbol[],Bool[])
+BoxCoxTransformerScheme() = BoxCoxTransformerScheme(zeros(0,0),Symbol[],Bool[])
 
 function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
 
