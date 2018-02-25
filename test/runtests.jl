@@ -4,54 +4,49 @@ using Base.Test
 
 const EPS = eps(Float64)
 
-## `UnivariateStandardizationScheme`
+## `UnivariateStandardizer`
 
-s = UnivariateStandardizationScheme()
-showall(s)
-fit!(s, [0,2,4])
-showall(s)
-@test round.(Int, transform(s, [0,4,8])) == [-1.0,1.0,3.0]
-@test round.(Int, inverse_transform(s, [-1, 1, 3])) == [0, 4, 8] 
+t = UnivariateStandardizer()
+showall(t)
+tM = Machine(t, [0, 2, 4])
+showall(tM)
 
-s = UnivariateStandardizationScheme([0,2,4])
-@test round(Int, transform(s, 4)) == 1
-@test round(Int, inverse_transform(s, 1)) == 4
+@test round.(Int, transform(tM, [0,4,8])) == [-1.0,1.0,3.0]
+@test round.(Int, inverse_transform(tM, [-1, 1, 3])) == [0, 4, 8] 
 
 # create skewed non-negative vector with a zero value:
 v = abs.(randn(1000))
 v = v - minimum(v)
+KoalaTransforms.normality(v)
 
-s = UnivariateBoxCoxScheme(v, shift=true)
-@test sum(abs.(v - inverse_transform(s,transform(s, v)))) <= 5000*EPS
+t = UnivariateBoxCoxTransformer(shift=true)
+showall(t)
+tM = Machine(t, v)
+@test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
-s2 = UnivariateBoxCoxScheme(shift=true)
-fit!(s2, v)
-@test transform(s2, v) == transform(s, v)
-s3 = UnivariateBoxCoxScheme(shift=true)
-@test fit_transform!(s3, v) == transform(s, v)
-               
 X, y = load_ames();
 
-s = BoxCoxScheme(X, shift=true, verbosity=0)
+## Standardizer for data frames
 
-s2 = BoxCoxScheme(shift=true)
-fit!(s2, X)
-@test transform(s2, X) == transform(s, X)
+t = Standardizer()
+tM = Machine(t, X)
+transform(tM, X)
 
-s3 = BoxCoxScheme(shift=true)
-@test fit_transform!(s3, X) == transform(s, X)
+t = Standardizer(features=[:GrLivArea])
+tM = Machine(t, X)
+transform(tM, X)
 
-s4 = BoxCoxScheme()
-X = fit_transform!(s4, X, verbosity=0)
+t = OneHotEncoder(drop_last=true)
+tM = Machine(t, X)
+Xt = transform(tM, X)
 
-s = HotEncodingScheme(drop_last=true)
-fit!(s, X)
+t = BoxCoxTransformer(shift=true)
+tM = Machine(t, X)
+transform(tM, X)
 
-Xt = transform(s, X)
+t = BoxCoxTransformer(shift=true, features=[:GrLivArea])
+tM = Machine(t, X)
+Xt = transform(tM, X)
 
-s3 =HotEncodingScheme(drop_last=true)
-@test Xt == fit_transform!(s3, X, verbosity=0)
 
-s2 = HotEncodingScheme(X, drop_last=true)
-@test transform(s, X) == transform(s2, X)
 
