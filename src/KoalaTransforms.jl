@@ -4,6 +4,7 @@ module KoalaTransforms
 export UnivariateStandardizer, Standardizer
 export OneHotEncoder
 export UnivariateBoxCoxTransformer, BoxCoxTransformer
+export TransformerForLinearModel_X, TransformerForLinearModel_y
 
 # extended:
 export transform, inverse_transform, fit # from `Koala`
@@ -507,5 +508,159 @@ function transform(transformer::BoxCoxTransformer, scheme, X::AbstractDataFrame)
 
 end
 
+## Generic transformers for supervised learning algorithms with linear predictors
+
+"""
+## `TransformerForLinearModels_X(boxcox=false, shift=true, drop_last=false)::Transformer`
+
+Use this transformer to prepare dataframe inputs for use with many
+supervised learning algorithms with linear predictors. The output is a
+`Float64` matrix.
+
+### Keyword arguments:
+
+- `boxcox`:  whether to apply Box-Cox transformations to the input patterns
+
+- `shift`: do we shift away from zero in Box-Cox transformations?
+
+- `drop_last`: do we drop the last slot in the one-hot-encoding?
+
+"""
+mutable struct TransformerForLinearModels_X <: Transformer
+    boxcox::Bool 
+    shift::Bool 
+    drop_last::Bool 
+end
+
+# lazy keyword constructors:
+TransformerForLinearModels_X(; boxcox=false, shift=true, drop_last=false) =
+    TransformerForLinearModels_X(boxcox, shift, drop_last)
+
+"""
+## `TransformerForLinearModels_y(boxcox=false, shift=true, standardize=true)::Transformer`
+
+Use this transformer to prepare target values for use with many
+supervised learning algorithms with linear predictors.
+
+### Keyword arguments:
+
+- `boxcox`:  whether to apply Box-Cox transformations to the input patterns
+
+- `shift`: do we shift away from zero in Box-Cox transformations?
+
+- `standardize`: do we standardize (after any Box-Cox transformations)?
+
+"""
+mutable struct TransformerForLinearModels_y <: Transformer
+    boxcox::Bool # do we apply Box-Cox transforms to target (before any standarization)?
+    shift::Bool # do we shift away from zero in Box-Cox transformations?
+    standardize::Bool # do we standardize targets?
+end
+
+# lazy keyword constructors:
+TransformerForLinearModels_y(; boxcox=false, shift=true, standardize=true) =
+    TransformerForLinearModels_y(boxcox, shift, standardize)
+
+struct Scheme_X <: BaseType
+    boxcox::BoxCoxTransformerScheme
+    hot::OneHotEncoderScheme
+    features::Vector{Symbol}
+    spawned_features::Vector{Symbol} # ie after one-hot encoding
+end
+
+struct Scheme_y <: BaseType
+    boxcox::Tuple{Float64,Float64}
+    standard::Tuple{Float64,Float64}
+end
+
+function fit(transformer::TransformerForLinearModels_X, X::AbstractDataFrame, parallel, verbosity)
+
+    features = names(X)
+    
+    # check `X` has only string and real eltypes:
+    eltypes_ok = true
+    for ft in features
+        T = eltype(X[ft])
+        if !(T <: AbstractString || T <: Real)
+            eltypes_ok = false
+        end
+    end
+    eltypes_ok || error("Only AbstractString and Real eltypes allowed in DataFrame.")
+
+    # fit Box-Cox transformation:
+    if transformer.boxcox
+        info("Computing input Box-Cox transformations.")
+        boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
+        boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
+        X = transform(boxcox_transformer, boxcox, X)
+    else
+        boxcox = BoxCoxTransformerScheme() # null scheme
+    end
+
+    info("Determining one-hot encodings for inputs.")
+    hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
+    hot =  fit(hot_transformer, X, true, verbosity - 1) 
+    spawned_features = hot.spawned_features    
+
+    return Scheme_X(boxcox, hot, features, spawned_features)
+
+end
+
+function transform(transformer::TransformerForLinearModels_X, scheme_X, X::AbstractDataFrame)
+    issubset(Set(scheme_X.features), Set(names(X))) ||
+        error("DataFrame feature incompatibility encountered.")
+    X = X[scheme_X.features]
+    if transformer.boxcox
+        boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
+        X = transform(boxcox_transformer, scheme_X.boxcox, X)
+    end
+    hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
+    X = transform(hot_transformer, scheme_X.hot, X)
+    return convert(Array{Float64}, X)
+end
+
+function fit(transformer::TransformerForLinearModels_y, y, parallel, verbosity)
+
+    if transformer.boxcox
+        info("Computing Box-Cox transformations for target.")
+        boxcox_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift)
+        boxcox = fit(boxcox_transformer, y, true, verbosity - 1)
+        y = transform(boxcox_transformer, boxcox, y)
+    else
+        boxcox = (0.0, 0.0) # null scheme
+    end
+    if transformer.standardize
+        info("Computing target standardization.")
+        standard_transformer = UnivariateStandardizer()
+        standard = fit(standard_transformer, y, true, verbosity - 1)
+    else
+        standard = (0.0, 1.0) # null scheme
+    end
+    return Scheme_y(boxcox, standard)
+end 
+
+function transform(transformer::TransformerForLinearModels_y, scheme_y, y)
+    if transformer.boxcox
+        boxcox_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift)
+        y = transform(boxcox_transformer, scheme_y.boxcox, y)
+    end
+    if transformer.standardize
+        standard_transformer = UnivariateStandardizer()
+        y = transform(standard_transformer, scheme_y.standard, y)
+    end 
+    return y
+end 
+
+function inverse_transform(transformer::TransformerForLinearModels_y, scheme_y, y)
+    if transformer.standardize
+        standard_transformer = UnivariateStandardizer()
+        y = inverse_transform(standard_transformer, scheme_y.standard, y)
+    end
+    if transformer.boxcox
+        boxcox_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift)
+        y = inverse_transform(boxcox_transformer, scheme_y.boxcox, y)
+    end
+    return y
+end
 
 end # module
