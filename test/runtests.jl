@@ -25,6 +25,12 @@ tM = Machine(t, v)
 @test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
 X, y = load_ames();
+train, test = splitrows(eachindex(y), 0.9);
+
+transformer = ToIntTransformer(sorted=true)
+transformerM = Machine(transformer, X[:Neighborhood])
+v = transform(transformerM, X[test,:Neighborhood])
+@test X[test, :Neighborhood] == inverse_transform(transformerM, v)
 
 transformer = DataFrameToArrayTransformer(features=[:OverallQual, :GrLivArea])
 transformerM = Machine(transformer, X)

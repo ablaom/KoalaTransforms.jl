@@ -1,6 +1,7 @@
 module KoalaTransforms
 
 # new:
+export ToIntTransformer
 export UnivariateStandardizer, Standardizer
 export OneHotEncoder
 export UnivariateBoxCoxTransformer, BoxCoxTransformer
@@ -21,12 +22,66 @@ import Distributions
 import Koala: Transformer, transform, fit, inverse_transform
 import Base: show, showall
 
-# to be exported from Koala.jl:
+# so above export from Koala works:
 import Koala: NullTransformer, FeatureTruncater
 import Koala: IdentityTransformer
 
+# development only:
+# using ADBUtilities
+
 # constants:
 const N_VALUES_THRESH = 16
+
+
+## Relabelling by integers
+
+mutable struct ToIntTransformer <: Transformer
+    sorted::Bool
+end
+
+ToIntTransformer(; sorted=false) = ToIntTransformer(sorted)
+
+struct ToIntScheme{T} <: BaseType
+    n_levels::Int
+    int_given_T::Dict{T, Int}
+    T_given_int::Dict{Int, T}
+end
+
+# null scheme constructor:
+ToIntScheme(S::Type{T}) where T = ToIntScheme{T}(0, Dict{T, Int}(), Dict{Int, T}())
+
+function fit(transformer::ToIntTransformer, v::AbstractVector{T},
+             parallel, verbosity) where T
+    int_given_T = Dict{T, Int}()
+    T_given_int = Dict{Int, T}()
+    vals = collect(Set(v))
+    if transformer.sorted
+        sort!(vals)
+    end
+    n_levels = length(vals)
+    if length(vals) > 2^62 - 1
+        error("Cannot encode with integers a vector "*
+                         "having more than $(2^62 - 1) values.")
+    end
+    i = 1
+    for c in vals
+        int_given_T[c] = i
+        T_given_int[i] = c
+        i = i + 1
+    end
+    return ToIntScheme{T}(n_levels, int_given_T, T_given_int)
+end
+
+# scalar case:
+transform(transformer::ToIntTransformer, scheme::ToIntScheme{T}, x::T) where T =
+    scheme.int_given_T[x]
+inverse_transform(transformer::ToIntTransformer, scheme, y::Int) = scheme.T_given_int[y]
+
+# vector case:
+transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
+          v::AbstractVector{T}) where T = Int[scheme.int_given_T[x] for x in v]
+inverse_transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
+                  w::AbstractVector{Int}) where T = T[scheme.T_given_int[y] for y in w]
 
 
 ## Converting DataFrames with ordinal features into arrays
