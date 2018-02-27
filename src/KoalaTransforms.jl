@@ -23,7 +23,7 @@ import Koala: Transformer, transform, fit, inverse_transform
 import Base: show, showall
 
 # so above export from Koala works:
-import Koala: NullTransformer, FeatureTruncater
+import Koala: EmptyTransformer, FeatureTruncater
 import Koala: IdentityTransformer
 
 # development only:
@@ -54,12 +54,12 @@ function fit(transformer::ToIntTransformer, v::AbstractVector{T},
              parallel, verbosity) where T
     int_given_T = Dict{T, Int}()
     T_given_int = Dict{Int, T}()
-    vals = collect(Set(v))
+    vals = collect(Set(v)) 
     if transformer.sorted
         sort!(vals)
     end
     n_levels = length(vals)
-    if length(vals) > 2^62 - 1
+    if n_levels > 2^62 - 1
         error("Cannot encode with integers a vector "*
                          "having more than $(2^62 - 1) values.")
     end
