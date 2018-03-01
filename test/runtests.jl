@@ -25,18 +25,18 @@ tM = Machine(t, v)
 @test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
 X, y = load_ames();
-train, test = splitrows(eachindex(y), 0.9);
+train, test = split(eachindex(y), 0.9);
 
 transformer = ToIntTransformer(sorted=true)
 transformerM = Machine(transformer, X[:Neighborhood])
 v = transform(transformerM, X[test,:Neighborhood])
 @test X[test, :Neighborhood] == inverse_transform(transformerM, v)
 
-transformer = DataFrameToArrayTransformer(features=[:OverallQual, :GrLivArea])
+transformer = DataFrameToArrayTransformer(boxcox=true)
 transformerM = Machine(transformer, X)
-@test transform(transformerM, X) == Array(X[[:OverallQual, :GrLivArea]])
 
-## Standardizer for data frames
+transformer = RegressionTargetTransformer(standardize=false, boxcox=true)
+transformerM = Machine(transformer, y)
 
 t = Standardizer()
 tM = Machine(t, X)

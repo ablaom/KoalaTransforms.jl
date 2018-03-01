@@ -5,13 +5,13 @@ export ToIntTransformer
 export UnivariateStandardizer, Standardizer
 export OneHotEncoder
 export UnivariateBoxCoxTransformer, BoxCoxTransformer
-export TransformerForLinearModel_X, TransformerForLinearModel_y
+export DataFrameToArrayTransformer, RegressionTargetTransformer
 
 # extended:
 export transform, inverse_transform, fit # from `Koala`
 
 # transformers rexported from Koala:
-export FeatureTruncater, DataFrameToArrayTransformer, IdentityTransformer
+export FeatureTruncater, IdentityTransformer
 
 # for use in this module:
 import Koala: BaseType, params, type_parameters
@@ -23,7 +23,7 @@ import Koala: Transformer, transform, fit, inverse_transform
 import Base: show, showall
 
 # so above export from Koala works:
-import Koala: EmptyTransformer, FeatureTruncater
+import Koala: EmptyTransformer, FeatureSelector
 import Koala: IdentityTransformer
 
 # development only:
@@ -82,25 +82,6 @@ transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
           v::AbstractVector{T}) where T = Int[scheme.int_given_T[x] for x in v]
 inverse_transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
                   w::AbstractVector{Int}) where T = T[scheme.T_given_int[y] for y in w]
-
-
-## Converting DataFrames with ordinal features into arrays
-
-mutable struct DataFrameToArrayTransformer <: Transformer
-    features::Vector{Symbol} # empty means use all
-end
-DataFrameToArrayTransformer(;features=Symbol[]) = DataFrameToArrayTransformer(features)
-function fit(transformer::DataFrameToArrayTransformer, X, parallel, verbosity)
-    if isempty(transformer.features)
-        return names(X)
-    else
-        return transformer.features
-    end
-end
-function transform(transformer::DataFrameToArrayTransformer, scheme, X)
-    issubset(Set(scheme), Set(names(X))) || throw(DomainError)
-    return convert(Array{Float64}, X[scheme])
-end 
 
 
 ## Univariate standardization 
@@ -563,14 +544,17 @@ function transform(transformer::BoxCoxTransformer, scheme, X::AbstractDataFrame)
 
 end
 
-## Generic transformers for supervised learning algorithms with linear predictors
+## General purpose transformer for supervised learning algorithms
+## needing floating point matrix input.
 
 """
-## `TransformerForLinearModels_X(boxcox=false, shift=true, drop_last=false)::Transformer`
+## `DataFrameToArrayTransformer(boxcox=false, shift=true, drop_last=false)::Transformer`
 
-Use this transformer to prepare dataframe inputs for use with many
-supervised learning algorithms with linear predictors. The output is a
-`Float64` matrix.
+Use this transformer to prepare dataframe inputs for use with
+supervised learning algorithms requiring `Matrix{T}` inputs, for
+`T<:Real`. Here `T` is forced to be `Float64`. Includes one-hot
+encoding of categoricals (any feature not of eltype T<:Real) and an
+option for Box-Cox transformations.
 
 ### Keyword arguments:
 
@@ -581,21 +565,22 @@ supervised learning algorithms with linear predictors. The output is a
 - `drop_last`: do we drop the last slot in the one-hot-encoding?
 
 """
-mutable struct TransformerForLinearModels_X <: Transformer
+mutable struct DataFrameToArrayTransformer <: Transformer
     boxcox::Bool 
     shift::Bool 
     drop_last::Bool 
 end
 
 # lazy keyword constructors:
-TransformerForLinearModels_X(; boxcox=false, shift=true, drop_last=false) =
-    TransformerForLinearModels_X(boxcox, shift, drop_last)
+DataFrameToArrayTransformer(; boxcox=false, shift=true, drop_last=false) =
+    DataFrameToArrayTransformer(boxcox, shift, drop_last)
 
 """
-## `TransformerForLinearModels_y(boxcox=false, shift=true, standardize=true)::Transformer`
+## `RegressionTargetTransformer(boxcox=false, shift=true, standardize=true)::Transformer`
 
-Use this transformer to prepare target values for use with many
-supervised learning algorithms with linear predictors.
+A general purpose transformer for target variables in regression
+problems. Standardizes by default, and includes Box-Cox
+transformations as an option.
 
 ### Keyword arguments:
 
@@ -606,15 +591,15 @@ supervised learning algorithms with linear predictors.
 - `standardize`: do we standardize (after any Box-Cox transformations)?
 
 """
-mutable struct TransformerForLinearModels_y <: Transformer
+mutable struct RegressionTargetTransformer <: Transformer
     boxcox::Bool # do we apply Box-Cox transforms to target (before any standarization)?
     shift::Bool # do we shift away from zero in Box-Cox transformations?
     standardize::Bool # do we standardize targets?
 end
 
 # lazy keyword constructors:
-TransformerForLinearModels_y(; boxcox=false, shift=true, standardize=true) =
-    TransformerForLinearModels_y(boxcox, shift, standardize)
+RegressionTargetTransformer(; boxcox=false, shift=true, standardize=true) =
+    RegressionTargetTransformer(boxcox, shift, standardize)
 
 struct Scheme_X <: BaseType
     boxcox::BoxCoxTransformerScheme
@@ -628,7 +613,7 @@ struct Scheme_y <: BaseType
     standard::Tuple{Float64,Float64}
 end
 
-function fit(transformer::TransformerForLinearModels_X, X::AbstractDataFrame, parallel, verbosity)
+function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, parallel, verbosity)
 
     features = names(X)
     
@@ -644,7 +629,7 @@ function fit(transformer::TransformerForLinearModels_X, X::AbstractDataFrame, pa
 
     # fit Box-Cox transformation:
     if transformer.boxcox
-        info("Computing input Box-Cox transformations.")
+        verbosity < 1 || info("Computing Box-Cox transformations on numerical data frame features.")
         boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
         boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
         X = transform(boxcox_transformer, boxcox, X)
@@ -652,7 +637,7 @@ function fit(transformer::TransformerForLinearModels_X, X::AbstractDataFrame, pa
         boxcox = BoxCoxTransformerScheme() # null scheme
     end
 
-    info("Determining one-hot encodings for inputs.")
+    verbosity < 1 || info("Determining one-hot encodings for data frame categoricals.")
     hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
     hot =  fit(hot_transformer, X, true, verbosity - 1) 
     spawned_features = hot.spawned_features    
@@ -661,7 +646,7 @@ function fit(transformer::TransformerForLinearModels_X, X::AbstractDataFrame, pa
 
 end
 
-function transform(transformer::TransformerForLinearModels_X, scheme_X, X::AbstractDataFrame)
+function transform(transformer::DataFrameToArrayTransformer, scheme_X, X::AbstractDataFrame)
     issubset(Set(scheme_X.features), Set(names(X))) ||
         error("DataFrame feature incompatibility encountered.")
     X = X[scheme_X.features]
@@ -674,10 +659,10 @@ function transform(transformer::TransformerForLinearModels_X, scheme_X, X::Abstr
     return convert(Array{Float64}, X)
 end
 
-function fit(transformer::TransformerForLinearModels_y, y, parallel, verbosity)
+function fit(transformer::RegressionTargetTransformer, y, parallel, verbosity)
 
     if transformer.boxcox
-        info("Computing Box-Cox transformations for target.")
+        verbosity < 1 || info("Computing Box-Cox transformations for target.")
         boxcox_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift)
         boxcox = fit(boxcox_transformer, y, true, verbosity - 1)
         y = transform(boxcox_transformer, boxcox, y)
@@ -685,7 +670,7 @@ function fit(transformer::TransformerForLinearModels_y, y, parallel, verbosity)
         boxcox = (0.0, 0.0) # null scheme
     end
     if transformer.standardize
-        info("Computing target standardization.")
+        verbosity < 1 || info("Computing target standardization.")
         standard_transformer = UnivariateStandardizer()
         standard = fit(standard_transformer, y, true, verbosity - 1)
     else
@@ -694,7 +679,7 @@ function fit(transformer::TransformerForLinearModels_y, y, parallel, verbosity)
     return Scheme_y(boxcox, standard)
 end 
 
-function transform(transformer::TransformerForLinearModels_y, scheme_y, y)
+function transform(transformer::RegressionTargetTransformer, scheme_y, y)
     if transformer.boxcox
         boxcox_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift)
         y = transform(boxcox_transformer, scheme_y.boxcox, y)
@@ -706,7 +691,7 @@ function transform(transformer::TransformerForLinearModels_y, scheme_y, y)
     return y
 end 
 
-function inverse_transform(transformer::TransformerForLinearModels_y, scheme_y, y)
+function inverse_transform(transformer::RegressionTargetTransformer, scheme_y, y)
     if transformer.standardize
         standard_transformer = UnivariateStandardizer()
         y = inverse_transform(standard_transformer, scheme_y.standard, y)
