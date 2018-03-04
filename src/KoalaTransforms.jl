@@ -11,7 +11,7 @@ export DataFrameToArrayTransformer, RegressionTargetTransformer
 export transform, inverse_transform, fit # from `Koala`
 
 # transformers rexported from Koala:
-export FeatureTruncater, IdentityTransformer
+export FeatureSelector, IdentityTransformer
 
 # for use in this module:
 import Koala: BaseType, params, type_parameters
