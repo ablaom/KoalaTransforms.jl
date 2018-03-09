@@ -33,7 +33,7 @@ import Koala: IdentityTransformer
 const N_VALUES_THRESH = 16
 
 
-## Relabelling by integers
+## Relabelling by consecutive integers starting at 1
 
 mutable struct ToIntTransformer <: Transformer
     sorted::Bool
