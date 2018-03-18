@@ -58,5 +58,7 @@ t = BoxCoxTransformer(shift=true, features=[:GrLivArea])
 tM = Machine(t, X)
 Xt = transform(tM, X)
 
-
+t = MakeCategoricalsIntTransformer(initial_label=0, sorted=true)
+tM = Machine(t, X)
+transform(tM, X)
 

@@ -6,6 +6,7 @@ export UnivariateStandardizer, Standardizer
 export OneHotEncoder
 export UnivariateBoxCoxTransformer, BoxCoxTransformer
 export DataFrameToArrayTransformer, RegressionTargetTransformer
+export MakeCategoricalsIntTransformer
 
 # extended:
 export transform, inverse_transform, fit # from `Koala`
@@ -15,7 +16,7 @@ export FeatureSelector, IdentityTransformer
 
 # for use in this module:
 import Koala: BaseType, params, type_parameters
-import DataFrames: names, AbstractDataFrame, DataFrame
+import DataFrames: names, AbstractDataFrame, DataFrame, eltypes
 import Distributions
 
 # to be extended:
@@ -37,9 +38,10 @@ const N_VALUES_THRESH = 16
 
 mutable struct ToIntTransformer <: Transformer
     sorted::Bool
+    initial_label::Int # ususally 0 or 1
 end
 
-ToIntTransformer(; sorted=false) = ToIntTransformer(sorted)
+ToIntTransformer(; sorted=false, initial_label=1) = ToIntTransformer(sorted, initial_label)
 
 struct ToIntScheme{T} <: BaseType
     n_levels::Int
@@ -63,7 +65,7 @@ function fit(transformer::ToIntTransformer, v::AbstractVector{T},
         error("Cannot encode with integers a vector "*
                          "having more than $(2^62 - 1) values.")
     end
-    i = 1
+    i = transformer.initial_label
     for c in vals
         int_given_T[c] = i
         T_given_int[i] = c
@@ -702,5 +704,47 @@ function inverse_transform(transformer::RegressionTargetTransformer, scheme_y, y
     end
     return y
 end
+
+
+## TRANSFORMER TO CONVERT CATEGORICALS TO INTEGER-VALUED COLUMNS
+
+mutable struct MakeCategoricalsIntTransformer <: Transformer
+    initial_label::Int
+    sorted::Bool
+end
+
+MakeCategoricalsIntTransformer(; initial_label=1, sorted=false) = MakeCategoricalsIntTransformer(initial_label, sorted)
+
+struct MakeCategoricalsIntScheme <: BaseType
+    categorical_features::Vector{Symbol}
+    schemes::Vector{ToIntScheme}
+    to_int_transformer::ToIntTransformer
+end
+
+function fit(transformer::MakeCategoricalsIntTransformer, X::AbstractDataFrame, parallel, verbosity)
+    categorical_features = Symbol[]
+    schemes = ToIntScheme[]
+    to_int_transformer = ToIntTransformer(sorted=transformer.sorted,
+                                          initial_label=transformer.initial_label)
+    types = eltypes(X)
+    features = names(X)
+    for j in eachindex(types)
+        if !(types[j] <: Real)
+            push!(categorical_features, features[j])
+            push!(schemes, fit(to_int_transformer, X[j], parallel, verbosity))
+        end
+    end
+    return MakeCategoricalsIntScheme(categorical_features, schemes, to_int_transformer)
+end
+
+function transform(transformer::MakeCategoricalsIntTransformer, scheme_X, X::AbstractDataFrame)
+    Xt = copy(X)
+    for j in eachindex(scheme_X.categorical_features)
+        ftr = scheme_X.categorical_features[j]
+        Xt[ftr] = transform(scheme_X.to_int_transformer, scheme_X.schemes[j], X[ftr])
+    end
+    return Xt
+end
+
 
 end # module
