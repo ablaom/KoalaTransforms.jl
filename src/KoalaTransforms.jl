@@ -734,6 +734,7 @@ function fit(transformer::MakeCategoricalsIntTransformer, X::AbstractDataFrame, 
             push!(schemes, fit(to_int_transformer, X[j], parallel, verbosity))
         end
     end
+    verbosity < 1 || info("Input features treated as categorical: $categorical_features")
     return MakeCategoricalsIntScheme(categorical_features, schemes, to_int_transformer)
 end
 
