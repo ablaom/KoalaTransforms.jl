@@ -32,6 +32,10 @@ transformerM = Machine(transformer, X[:Neighborhood])
 v = transform(transformerM, X[test,:Neighborhood])
 @test X[test, :Neighborhood] == inverse_transform(transformerM, v)
 
+transformer.map_unseen_to_minus_one = true
+transformerM = Machine(transformer, [1,2,3,4])
+@test transform(transformerM, 5) == -1
+
 transformer = DataFrameToArrayTransformer(boxcox=true)
 transformerM = Machine(transformer, X)
 

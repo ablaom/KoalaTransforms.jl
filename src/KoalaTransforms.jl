@@ -39,9 +39,13 @@ const N_VALUES_THRESH = 16
 mutable struct ToIntTransformer <: Transformer
     sorted::Bool
     initial_label::Int # ususally 0 or 1
+    map_unseen_to_minus_one::Bool # unseen inputs are transformed to -1
 end
 
-ToIntTransformer(; sorted=false, initial_label=1) = ToIntTransformer(sorted, initial_label)
+ToIntTransformer(; sorted=false, initial_label=1,
+                 map_unseen_to_minus_one=false) =
+                     ToIntTransformer(sorted, initial_label,
+                                      map_unseen_to_minus_one)
 
 struct ToIntScheme{T} <: BaseType
     n_levels::Int
@@ -75,8 +79,21 @@ function fit(transformer::ToIntTransformer, v::AbstractVector{T},
 end
 
 # scalar case:
-transform(transformer::ToIntTransformer, scheme::ToIntScheme{T}, x::T) where T =
-    scheme.int_given_T[x]
+function transform(transformer::ToIntTransformer, scheme::ToIntScheme{T}, x::T) where T
+    ret = 0 # otherwise ret below stays in local scope
+    try 
+        ret = scheme.int_given_T[x]
+    catch exception
+        if isa(exception, KeyError)
+            if transformer.map_unseen_to_minus_one 
+                ret = -1
+            else
+                throw(exception)
+            end
+        end 
+    end
+    return ret
+end 
 inverse_transform(transformer::ToIntTransformer, scheme, y::Int) = scheme.T_given_int[y]
 
 # vector case:
