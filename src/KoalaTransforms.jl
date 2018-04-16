@@ -97,8 +97,10 @@ end
 inverse_transform(transformer::ToIntTransformer, scheme, y::Int) = scheme.T_given_int[y]
 
 # vector case:
-transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
-          v::AbstractVector{T}) where T = Int[scheme.int_given_T[x] for x in v]
+function transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
+                   v::AbstractVector{T}) where T
+    return Int[transform(transformer, scheme, x) for x in v]
+end
 inverse_transform(transformer::ToIntTransformer, scheme::ToIntScheme{T},
                   w::AbstractVector{Int}) where T = T[scheme.T_given_int[y] for y in w]
 
