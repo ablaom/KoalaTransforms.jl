@@ -24,8 +24,11 @@ showall(t)
 tM = Machine(t, v)
 @test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
-X, y = load_ames();
-train, test = split(eachindex(y), 0.9);
+const X, y = load_ames();
+const train, test = split(eachindex(y), 0.9);
+
+# introduce a field of type `Char`:
+X[1] = map(Char, X[1])
 
 transformer = ToIntTransformer(sorted=true)
 transformerM = Machine(transformer, X[:Neighborhood])

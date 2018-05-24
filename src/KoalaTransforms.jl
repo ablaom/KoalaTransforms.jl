@@ -223,16 +223,17 @@ OneHotEncoder(; drop_last::Bool=false) = OneHotEncoder(drop_last)
 struct OneHotEncoderScheme <: BaseType
     features::Vector{Symbol}         # feature labels
     spawned_features::Vector{Symbol} # feature labels after one-hot encoding
-    values_given_feature::Dict{Symbol,Vector{String}}
+    values_given_feature::Dict{Symbol,Vector{Any}}
 end
 
 function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosity)
 
     features = names(X)
-    values_given_feature = Dict{Symbol,Vector{String}}()
+    values_given_feature = Dict{Symbol, Any}()
         
     for ft in features 
         if !(eltype(X[ft]) <: Real)
+            println(ft)
             values_given_feature[ft] = sort!(unique(X[ft]))
             if transformer.drop_last
                 values_given_feature[ft] = values_given_feature[ft][1:(end - 1)]
