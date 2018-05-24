@@ -204,6 +204,15 @@ end
 
 ## One-hot encoding
 
+"""
+    OneHotEncoder(drop_last=false)
+
+Returns a transformer for one-hot encoding the categorical features of
+an `AbstractDataFrame` object. Here "categorical" refers to any
+feature whose eltype is not a subtype of `Real`. All eltypes must
+admit a `<` and `string` method.
+
+"""
 mutable struct OneHotEncoder <: Transformer
     drop_last::Bool
 end
@@ -223,7 +232,7 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
     values_given_feature = Dict{Symbol,Vector{String}}()
         
     for ft in features 
-        if eltype(X[ft]) <: AbstractString
+        if !(eltype(X[ft]) <: Real)
             values_given_feature[ft] = sort!(unique(X[ft]))
             if transformer.drop_last
                 values_given_feature[ft] = values_given_feature[ft][1:(end - 1)]
@@ -232,21 +241,17 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
                 n_values = length(keys(values_given_feature[ft]))
                 println("Spawned $n_values columns to hot-encode $ft.")
             end
-        elseif eltype(X[ft]) == Char
-            warn("A feature of Char type has been encountered and "*
-                 "is being ignored. To be hot-encoded "*
-                 "it must first be converted to some AbstractString type.")
         end  
     end
 
     spawned_features = Symbol[]
 
     for ft in features
-        if eltype(X[ft]) <: AbstractString
+        if !(eltype(X[ft]) <: Real)
             for value in values_given_feature[ft]
                 subft = Symbol(string(ft,"__",value))
 
-                # in (rare) case subft is not a new feature label:
+                # in the (rare) case subft is not a new feature label:
                 while subft in features
                     subft = Symbol(string(subft,"_"))
                 end
@@ -418,8 +423,8 @@ end
 """
 ## `struct BoxCoxTransformer`
 
-Transformer for Box-Cox transformations on each ordinal feature of a
-`DataFrame` object.
+Transformer for Box-Cox transformations on each numerical feature of a
+`DataFrame` object. Here "numerical" means of eltype `T <: Real`.
 
 ### Method calls 
 
@@ -575,7 +580,8 @@ Use this transformer to prepare dataframe inputs for use with
 supervised learning algorithms requiring `Matrix{T}` inputs, for
 `T<:Real`. Here `T` is forced to be `Float64`. Includes one-hot
 encoding of categoricals (any feature not of eltype T<:Real) and an
-option for Box-Cox transformations.
+option for Box-Cox transformations. Note that all eltypes must admit
+`<` and `string` methods.
 
 ### Keyword arguments:
 
@@ -595,6 +601,43 @@ end
 # lazy keyword constructors:
 DataFrameToArrayTransformer(; boxcox=false, shift=true, drop_last=false) =
     DataFrameToArrayTransformer(boxcox, shift, drop_last)
+
+function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, parallel, verbosity)
+
+    features = names(X)
+    
+    # fit Box-Cox transformation to numerical features:
+    if transformer.boxcox
+        verbosity < 1 || info("Computing Box-Cox transformations "*
+                              "on numerical data frame features.")
+        boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
+        boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
+        X = transform(boxcox_transformer, boxcox, X)
+    else
+        boxcox = BoxCoxTransformerScheme() # null scheme
+    end
+
+    verbosity < 1 || info("Determining one-hot encodings for data frame categoricals.")
+    hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
+    hot =  fit(hot_transformer, X, true, verbosity - 1) 
+    spawned_features = hot.spawned_features 
+
+    return Scheme_X(boxcox, hot, features, spawned_features)
+
+end
+
+function transform(transformer::DataFrameToArrayTransformer, scheme_X, X::AbstractDataFrame)
+    issubset(Set(scheme_X.features), Set(names(X))) ||
+        error("DataFrame feature incompatibility encountered.")
+    X = X[scheme_X.features]
+    if transformer.boxcox
+        boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
+        X = transform(boxcox_transformer, scheme_X.boxcox, X)
+    end
+    hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
+    X = transform(hot_transformer, scheme_X.hot, X)
+    return convert(Array{Float64}, X)
+end
 
 """
 ## `RegressionTargetTransformer(boxcox=false, shift=true, standardize=true)::Transformer`
@@ -632,52 +675,6 @@ end
 struct Scheme_y <: BaseType
     boxcox::Tuple{Float64,Float64}
     standard::Tuple{Float64,Float64}
-end
-
-function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, parallel, verbosity)
-
-    features = names(X)
-    
-    # check `X` has only string and real eltypes:
-    eltypes_ok = true
-    for ft in features
-        T = eltype(X[ft])
-        if !(T <: AbstractString || T <: Real)
-            eltypes_ok = false
-        end
-    end
-    eltypes_ok || error("Only AbstractString and Real eltypes allowed in DataFrame.")
-
-    # fit Box-Cox transformation:
-    if transformer.boxcox
-        verbosity < 1 || info("Computing Box-Cox transformations on numerical data frame features.")
-        boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
-        boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
-        X = transform(boxcox_transformer, boxcox, X)
-    else
-        boxcox = BoxCoxTransformerScheme() # null scheme
-    end
-
-    verbosity < 1 || info("Determining one-hot encodings for data frame categoricals.")
-    hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
-    hot =  fit(hot_transformer, X, true, verbosity - 1) 
-    spawned_features = hot.spawned_features    
-
-    return Scheme_X(boxcox, hot, features, spawned_features)
-
-end
-
-function transform(transformer::DataFrameToArrayTransformer, scheme_X, X::AbstractDataFrame)
-    issubset(Set(scheme_X.features), Set(names(X))) ||
-        error("DataFrame feature incompatibility encountered.")
-    X = X[scheme_X.features]
-    if transformer.boxcox
-        boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
-        X = transform(boxcox_transformer, scheme_X.boxcox, X)
-    end
-    hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
-    X = transform(hot_transformer, scheme_X.hot, X)
-    return convert(Array{Float64}, X)
 end
 
 function fit(transformer::RegressionTargetTransformer, y, parallel, verbosity)
