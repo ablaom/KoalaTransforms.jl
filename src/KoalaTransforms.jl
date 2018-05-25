@@ -276,7 +276,7 @@ function transform(transformer::OneHotEncoder, scheme, X::AbstractDataFrame)
     
     Xout = DataFrame()
     for ft in scheme.features
-        if eltype(X[ft]) <: AbstractString
+        if !(eltype(X[ft]) <: Real)
             for value in scheme.values_given_feature[ft]
                 subft = Symbol(string(ft,"__",value))
 

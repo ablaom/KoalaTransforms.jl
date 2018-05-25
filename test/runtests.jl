@@ -28,7 +28,7 @@ const X, y = load_ames();
 const train, test = split(eachindex(y), 0.9);
 
 # introduce a field of type `Char`:
-X[1] = map(Char, X[1])
+X[:OverallQual] = map(Char, X[:OverallQual])
 
 transformer = ToIntTransformer(sorted=true)
 transformerM = Machine(transformer, X[:Neighborhood])
@@ -66,7 +66,14 @@ t = BoxCoxTransformer(shift=true, features=[:GrLivArea])
 tM = Machine(t, X)
 Xt = transform(tM, X)
 
+t = DataFrameToArrayTransformer()
+tM = Machine(t, X[[:OverallQual]], verbosity=3)
+Xt = transform(tM, X)
+@test size(Xt, 2) == length(unique(X[:OverallQual]))
+
 t = MakeCategoricalsIntTransformer(initial_label=0, sorted=true)
 tM = Machine(t, X)
 transform(tM, X)
+
+
 
