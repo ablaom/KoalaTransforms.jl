@@ -230,17 +230,18 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
 
     features = names(X)
     values_given_feature = Dict{Symbol, Any}()
-        
+
+    verbosity < 1 || info("One-hot encoding categorical features.")
+    
     for ft in features 
         if !(eltype(X[ft]) <: Real)
-            println(ft)
             values_given_feature[ft] = sort!(unique(X[ft]))
             if transformer.drop_last
                 values_given_feature[ft] = values_given_feature[ft][1:(end - 1)]
             end
-            if verbosity > 0
+            if verbosity > 1
                 n_values = length(keys(values_given_feature[ft]))
-                println("Spawned $n_values columns to hot-encode $ft.")
+                info("Spawned $n_values columns to one-hot encode $ft.")
             end
         end  
     end
@@ -474,6 +475,8 @@ BoxCoxTransformerScheme() = BoxCoxTransformerScheme(zeros(0,0),Symbol[],Bool[])
 
 function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
 
+    verbosity < 1 || info("Computing Box-Cox transformations "*
+                          "on numerical features.")
     # determine indices of features to be transformed
     features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
     feature_is_transformed = Array{Bool}(size(X, 2))
@@ -489,42 +492,42 @@ function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
     schemes = Array{Float64}(2, size(X,2))
     univ_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift,
                                                n=transformer.n)
-    verbosity < 1 ||
-        println("Box-Cox transformations: ")
+    verbosity < 2 ||
+        info("Box-Cox transformations: ")
     for j in 1:size(X,2)
         if feature_is_transformed[j]
             if minimum(X[j]) == 0 && !transformer.shift
-                verbosity < 1 ||
-                    println("  :$(names(X)[j])    "*
+                verbosity < 2 ||
+                    info("  :$(names(X)[j])    "*
                             "(*not* transformed, contains zero values)")
                 feature_is_transformed[j] = false
                 schemes[:,j] = [0.0, 0.0]
             else
                 n_values = length(unique(X[j]))
                 if n_values < N_VALUES_THRESH
-                    verbosity < 1 ||
-                        println("  :$(names(X)[j])    "*
+                    verbosity < 2 ||
+                        info("  :$(names(X)[j])    "*
                                 "(*not* transformed, less than $N_VALUES_THRESH values)")
                     feature_is_transformed[j] = false
                     schemes[:,j] = [0.0, 0.0]
                 else
                     lambda, c = fit(univ_transformer, collect(X[j]), true, verbosity-1)
                     if lambda in [-0.4, 3]
-                        verbosity < 1 ||
-                            println("  :$(names(X)[j])    "*
+                        verbosity < 2 ||
+                            info("  :$(names(X)[j])    "*
                                     "(*not* transformed, lambda too extreme)")
                         feature_is_transformed[j] = false
                         schemes[:,j] = [0.0, 0.0]
                     elseif lambda == 1.0
-                        verbosity < 1 ||
-                            println("  :$(names(X)[j])    "*
+                        verbosity < 2 ||
+                            info("  :$(names(X)[j])    "*
                                     "(*not* transformed, not skewed)")
                         feature_is_transformed[j] = false
                         schemes[:,j] = [0.0, 0.0]
                     else
                         schemes[:,j] = [lambda, c]
                         verbosity <1 ||
-                            println("  :$(names(X)[j])    lambda=$lambda  "*
+                            info("  :$(names(X)[j])    lambda=$lambda  "*
                                     "shift=$c")
                     end
                 end
@@ -609,8 +612,6 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
     
     # fit Box-Cox transformation to numerical features:
     if transformer.boxcox
-        verbosity < 1 || info("Computing Box-Cox transformations "*
-                              "on numerical data frame features.")
         boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
         boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
         X = transform(boxcox_transformer, boxcox, X)
