@@ -40,11 +40,13 @@ transformerM = Machine(transformer, [1,2,3,4])
 @test transform(transformerM, 5) == -1
 @test transform(transformerM, [5,1])[1] == -1 
 
-transformer = DataFrameToArrayTransformer(boxcox=true)
+transformer = DataFrameToArrayTransformer(boxcox=true, standardize=true)
 transformerM = Machine(transformer, X)
+transform(transformerM, X)
 
 transformer = RegressionTargetTransformer(standardize=false, boxcox=true)
 transformerM = Machine(transformer, y)
+transform(transformerM, y)
 
 t = Standardizer()
 tM = Machine(t, X)

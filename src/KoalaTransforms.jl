@@ -7,6 +7,7 @@ export OneHotEncoder
 export UnivariateBoxCoxTransformer, BoxCoxTransformer
 export DataFrameToArrayTransformer, RegressionTargetTransformer
 export MakeCategoricalsIntTransformer
+export DataFrameToStandardizedArrayTransformer
 
 # extended:
 export transform, inverse_transform, fit # from `Koala`
@@ -152,6 +153,9 @@ struct StandardizerScheme <: BaseType
     is_transformed::Vector{Bool}
 end
 
+# null scheme:
+StandardizerScheme() = StandardizerScheme(zeros(0,0), Symbol[], Bool[])
+
 function fit(transformer::Standardizer, X, parallel, verbosity)
     
     # determine indices of features to be transformed
@@ -167,13 +171,13 @@ function fit(transformer::Standardizer, X, parallel, verbosity)
 
     # fit each of those features
     schemes = Matrix{Float64}(2, size(X, 2))
-    verbosity < 1 || println("Features standarized: ")
+    verbosity < 1 || info("Features standarized: ")
     univ_transformer = UnivariateStandardizer()
     for j in 1:size(X, 2)
         if is_transformed[j]
             schemes[:,j] = [fit(univ_transformer, collect(X[j]), true, verbosity - 1)...]
             verbosity < 1 ||
-                println("  :$(names(X)[j])    mu=$(schemes[1,j])  sigma=$(schemes[2,j])")
+                info("  :$(names(X)[j])    mu=$(schemes[1,j])  sigma=$(schemes[2,j])")
         else
             schemes[:,j] = Float64[0.0, 0.0]
         end
@@ -578,7 +582,8 @@ end
 ## needing floating point matrix input.
 
 """
-## `DataFrameToArrayTransformer(boxcox=false, shift=true, drop_last=false)::Transformer`
+    DataFrameToArrayTransformer(boxcox=false, shift=true, 
+    standardize=false, drop_last=false)
 
 Use this transformer to prepare dataframe inputs for use with
 supervised learning algorithms requiring `Matrix{T}` inputs, for
@@ -589,22 +594,34 @@ option for Box-Cox transformations. Note that all eltypes must admit
 
 ### Keyword arguments:
 
-- `boxcox`:  whether to apply Box-Cox transformations to the input patterns
+- `boxcox`:  whether to apply Box-Cox transformations to the columns
 
 - `shift`: do we shift away from zero in Box-Cox transformations?
+
+- `standardize`: whether to standardize the columns
 
 - `drop_last`: do we drop the last slot in the one-hot-encoding?
 
 """
 mutable struct DataFrameToArrayTransformer <: Transformer
     boxcox::Bool 
-    shift::Bool 
+    shift::Bool
+    standardize::Bool
     drop_last::Bool 
 end
 
 # lazy keyword constructors:
-DataFrameToArrayTransformer(; boxcox=false, shift=true, drop_last=false) =
-    DataFrameToArrayTransformer(boxcox, shift, drop_last)
+DataFrameToArrayTransformer(; boxcox=false, shift=true, standardize=false,
+                            drop_last=false) =
+    DataFrameToArrayTransformer(boxcox, shift, standardize, drop_last)
+
+struct Scheme_X <: BaseType
+    boxcox::BoxCoxTransformerScheme
+    stand::StandardizerScheme
+    hot::OneHotEncoderScheme
+    features::Vector{Symbol}
+    spawned_features::Vector{Symbol} # ie after one-hot encoding
+end
 
 function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, parallel, verbosity)
 
@@ -612,6 +629,7 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
     
     # fit Box-Cox transformation to numerical features:
     if transformer.boxcox
+        verbosity < 1 || info("Determining Box-Cox transformation parameters.")
         boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
         boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
         X = transform(boxcox_transformer, boxcox, X)
@@ -619,12 +637,21 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
         boxcox = BoxCoxTransformerScheme() # null scheme
     end
 
+    if transformer.standardize
+        verbosity < 1 || info("Determining standardization parameters.")
+        standardizer = Standardizer()
+        stand = fit(standardizer, X, true, verbosity - 1)
+        X = transform(standardizer, stand, X)
+    else
+        stand = StandardizerScheme() # null scheme;;;
+    end
+    
     verbosity < 1 || info("Determining one-hot encodings for data frame categoricals.")
     hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
     hot =  fit(hot_transformer, X, true, verbosity - 1) 
     spawned_features = hot.spawned_features 
 
-    return Scheme_X(boxcox, hot, features, spawned_features)
+    return Scheme_X(boxcox, stand, hot, features, spawned_features)
 
 end
 
@@ -632,10 +659,16 @@ function transform(transformer::DataFrameToArrayTransformer, scheme_X, X::Abstra
     issubset(Set(scheme_X.features), Set(names(X))) ||
         error("DataFrame feature incompatibility encountered.")
     X = X[scheme_X.features]
+
     if transformer.boxcox
         boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
         X = transform(boxcox_transformer, scheme_X.boxcox, X)
     end
+
+    if transformer.standardize
+        X = transform(Standardizer(), scheme_X.stand, X)
+    end
+    
     hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
     X = transform(hot_transformer, scheme_X.hot, X)
     return convert(Array{Float64}, X)
@@ -666,13 +699,6 @@ end
 # lazy keyword constructors:
 RegressionTargetTransformer(; boxcox=false, shift=true, standardize=true) =
     RegressionTargetTransformer(boxcox, shift, standardize)
-
-struct Scheme_X <: BaseType
-    boxcox::BoxCoxTransformerScheme
-    hot::OneHotEncoderScheme
-    features::Vector{Symbol}
-    spawned_features::Vector{Symbol} # ie after one-hot encoding
-end
 
 struct Scheme_y <: BaseType
     boxcox::Tuple{Float64,Float64}
@@ -767,3 +793,5 @@ end
 
 
 end # module
+
+
