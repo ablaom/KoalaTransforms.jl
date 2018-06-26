@@ -8,6 +8,8 @@ export UnivariateBoxCoxTransformer, BoxCoxTransformer
 export DataFrameToArrayTransformer, RegressionTargetTransformer
 export MakeCategoricalsIntTransformer
 export DataFrameToStandardizedArrayTransformer
+export IntegerToInt64Transformer
+export UnivariateDiscretizer, Discretizer
 
 # extended:
 export transform, inverse_transform, fit # from `Koala`
@@ -17,6 +19,7 @@ export FeatureSelector, IdentityTransformer
 
 # for use in this module:
 import Koala: BaseType, params, type_parameters
+import Koala: TransformerMachine, Machine
 import DataFrames: names, AbstractDataFrame, DataFrame, eltypes
 import Distributions
 
@@ -643,7 +646,7 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
         stand = fit(standardizer, X, true, verbosity - 1)
         X = transform(standardizer, stand, X)
     else
-        stand = StandardizerScheme() # null scheme;;;
+        stand = StandardizerScheme() # null scheme
     end
     
     verbosity < 1 || info("Determining one-hot encodings for data frame categoricals.")
@@ -791,6 +794,168 @@ function transform(transformer::MakeCategoricalsIntTransformer, scheme_X, X::Abs
     return Xt
 end
 
+
+## DISCRETIZATION OF CONTINUOUS VARIABLES
+
+mutable struct UnivariateDiscretizer <: Transformer
+    n_classes::Int
+end
+
+# lazy keyword constructor:
+UnivariateDiscretizer(; n_classes=512) = UnivariateDiscretizer(n_classes)
+
+struct UnivariateDiscretizerScheme <: BaseType
+    odd_quantiles::Vector{Float64}
+    even_quantiles::Vector{Float64}
+end
+
+function fit(transformer::UnivariateDiscretizer, v, parallel, verbosity)
+    n_classes = transformer.n_classes
+    quantiles = quantile(v, Array(linspace(0,1,2*n_classes+1)))  
+    clipped_quantiles = quantiles[2:2*n_classes] # drop 0% and 100% quantiles
+    
+    # odd_quantiles for transforming, even_quantiles used for inverse_transforming:
+    odd_quantiles = clipped_quantiles[2:2:(2*n_classes-2)]
+    even_quantiles = clipped_quantiles[1:2:(2*n_classes-1)]
+
+    return UnivariateDiscretizerScheme(odd_quantiles, even_quantiles)
+end
+
+# transforming scalars:
+function transform(transformer::UnivariateDiscretizer, scheme, r::Real)
+    k = 1
+    for level in scheme.odd_quantiles
+        if r > level
+            k = k + 1
+        end
+    end
+    return k
+end
+
+# transforming vectors:
+function transform(transformer::UnivariateDiscretizer, scheme,
+                   v::AbstractVector{T}) where T<:Real
+    return [transform(transformer, scheme, r) for r in v]
+end
+
+# scalars:
+function inverse_transform(transformer::UnivariateDiscretizer, scheme, k::Int)
+    n_classes = length(scheme.even_quantiles)
+    if k < 1
+        return scheme.even_quantiles[1]
+    elseif k > n_classes
+        return scheme.even_quantiles[n_classes]
+    end
+    return scheme.even_quantiles[k]
+end
+
+# vectors:
+function inverse_transform(transformer::UnivariateDiscretizer, scheme,
+                           w::AbstractVector{T}) where T<:Integer
+    return [inverse_transform(transformer, scheme, k) for k in w]
+end
+
+
+## CONVERTING ANY INTEGER TYPE TO INT16
+
+mutable struct IntegerToInt64Transformer <: Transformer
+end
+
+fit(transformer::IntegerToInt64Transformer, X, parallel, verbosity) = nothing
+
+transform(transformer::IntegerToInt64Transformer, scheme, X) = Int64[X...]
+
+
+## DISCRETIZING ALL COLUMNS OF A DATAFRAME
+
+struct NominalOrdinalIntArray <: BaseType
+    A::Matrix{Int}
+    features::Vector{Symbol}
+    is_ordinal::Vector{Bool}
+end
+
+function showall(stream::IO, X::NominalOrdinalIntArray)
+    features_plus = Array{String}(length(X.features))
+    for j in eachindex(X.features)
+        kind = X.is_ordinal[j] ? "ordinal" : "nominal"
+        features_plus[j] = string(X.features[j], " ($kind)  ")
+    end
+    for str in features_plus
+        print(stream, str)
+    end
+    println(stream)
+    show(stream, MIME("text/plain"), X.A)
+end
+
+mutable struct Discretizer <: Transformer
+    n_classes::Int
+    features::Vector{Symbol} # features to be used; empty means all
+end
+
+# lazy keyword constructor:
+Discretizer(; n_classes=512, features=Symbol[]) = Discretizer(n_classes, features)
+
+struct DiscretizerScheme
+    features::Vector{Symbol} # features actually used
+    transformer_machines::Vector{TransformerMachine}
+    is_ordinal::Vector{Bool}    
+end
+
+function fit(transformer::Discretizer, X::AbstractDataFrame, parallel, verbosity)
+
+    to_int = ToIntTransformer(sorted=true)
+    to_int64 = IntegerToInt64Transformer() # just converts type to Int64
+    discrete = UnivariateDiscretizer()
+
+    if isempty(transformer.features)
+        features = names(X)
+    else
+        features = transformer.features
+    end
+
+    transformer_machines = Array{TransformerMachine}(length(features))
+    is_ordinal = Array{Int}(length(features))
+    
+    j = 1
+    for ftr in features
+        if eltype(X[ftr]) <: Real
+            is_ordinal[j] = true
+            if eltype(X[ftr]) <: Integer
+                transformer_machines[j] = Machine(to_int64, X[ftr];
+                parallel=false, verbosity=verbosity - 1)
+            else
+                transformer_machines[j] = Machine(discrete, X[ftr];
+                parallel=false, verbosity=verbosity - 1)
+            end
+        else
+            is_ordinal[j] = false
+            transformer_machines[j] = Machine(to_int, X[ftr];
+            parallel=false, verbosity=verbosity - 1)
+        end
+        j +=1
+    end
+    
+    return DiscretizerScheme(features, transformer_machines, is_ordinal)
+    
+end
+
+function transform(transformer::Discretizer, scheme, X)
+
+    issubset(Set(scheme.features), Set(names(X))) ||
+        error("Provided DataFrame with incompatible features.")
+
+    n_features = length(scheme.features)
+    A = Array{Int}(size(X, 1), n_features)
+
+    for j in 1:n_features
+        A[:,j] = transform(scheme.transformer_machines[j],
+                           X[:,scheme.features[j]])
+    end
+
+    return NominalOrdinalIntArray(A, scheme.features, scheme.is_ordinal)
+
+end
+            
 
 end # module
 

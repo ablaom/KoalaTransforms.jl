@@ -1,6 +1,7 @@
 using Koala
 using KoalaTransforms
 using Base.Test
+using DataFrames
 
 const EPS = eps(Float64)
 
@@ -77,5 +78,26 @@ t = MakeCategoricalsIntTransformer(initial_label=0, sorted=true)
 tM = Machine(t, X)
 transform(tM, X)
 
+# IntegerToInt64:
+t = IntegerToInt64Transformer()
+v = UInt8[4, 5, 2, 3, 1]
+tM = Machine(t, v)
+@test transform(tM, UInt8[3, 7, 8]) == [3, 7, 8]
 
+# Univariate discretization:
+v = randn(10000)
+t = UnivariateDiscretizer(n_classes=100)
+tM = Machine(t, v)
+w = transform(tM, v)
+bad_values = filter(v - inverse_transform(tM, w)) do x
+    abs(x) > 0.05
+end
+@test length(bad_values)/length(v) < 0.06
 
+# Discretization of DataFrame:
+X = DataFrame(n1=["a", "b", "a"], n2=["g", "g", "g"],
+              o1=[4.5, 3.6, 4.0], o2=[7, 8, 10], o3=UInt8[3,5,10])
+
+t = Discretizer(features=[:o1, :o2, :o3, :n1])
+tM = Machine(t, X)
+Xt = transform(tM, X)
