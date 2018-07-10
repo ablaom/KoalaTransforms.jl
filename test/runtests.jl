@@ -95,9 +95,13 @@ end
 @test length(bad_values)/length(v) < 0.06
 
 # Discretization of DataFrame:
-X = DataFrame(n1=["a", "b", "a"], n2=["g", "g", "g"],
-              o1=[4.5, 3.6, 4.0], o2=[7, 8, 10], o3=UInt8[3,5,10])
+X = DataFrame(n1=["a", "b", "a"], n2=["g", "g", "g"], n3=[7, 8, 9],
+              n4 =UInt8[3,5,10],  o1=[4.5, 3.6, 4.0], )
 
-t = Discretizer(features=[:o1, :o2, :o3, :n1])
+t = Discretizer(features=[:o1, :n3, :n2, :n1])
 tM = Machine(t, X)
 Xt = transform(tM, X)
+@test Xt.features == [:o1, :n3, :n2, :n1]
+@test Xt.is_ordinal == [true, false, false, false]
+@test Xt.A == [512 1 1 1; 1 2 1 2; 256 3 1 1]
+

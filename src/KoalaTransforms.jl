@@ -37,7 +37,6 @@ import Koala: IdentityTransformer
 # constants:
 const N_VALUES_THRESH = 16
 
-
 ## Relabelling by consecutive integers starting at 1
 
 mutable struct ToIntTransformer <: Transformer
@@ -165,7 +164,7 @@ function fit(transformer::Standardizer, X, parallel, verbosity)
     features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
     is_transformed = Array{Bool}(size(X, 2))
     for j in 1:size(X, 2)
-        if names(X)[j] in features_to_try && eltype(X[j]) <: Real
+        if names(X)[j] in features_to_try && eltype(X[j]) <: AbstractFloat
             is_transformed[j] = true
         else
             is_transformed[j] = false
@@ -216,8 +215,8 @@ end
 
 Returns a transformer for one-hot encoding the categorical features of
 an `AbstractDataFrame` object. Here "categorical" refers to any
-feature whose eltype is not a subtype of `Real`. All eltypes must
-admit a `<` and `string` method.
+feature whose eltype is not a subtype of `AbstractFloat`. All eltypes
+must admit a `<` and `string` method.
 
 """
 mutable struct OneHotEncoder <: Transformer
@@ -241,7 +240,7 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
     verbosity < 1 || info("One-hot encoding categorical features.")
     
     for ft in features 
-        if !(eltype(X[ft]) <: Real)
+        if !(eltype(X[ft]) <: AbstractFloat)
             values_given_feature[ft] = sort!(unique(X[ft]))
             if transformer.drop_last
                 values_given_feature[ft] = values_given_feature[ft][1:(end - 1)]
@@ -256,7 +255,7 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
     spawned_features = Symbol[]
 
     for ft in features
-        if !(eltype(X[ft]) <: Real)
+        if !(eltype(X[ft]) <: AbstractFloat)
             for value in values_given_feature[ft]
                 subft = Symbol(string(ft,"__",value))
 
@@ -283,7 +282,7 @@ function transform(transformer::OneHotEncoder, scheme, X::AbstractDataFrame)
     
     Xout = DataFrame()
     for ft in scheme.features
-        if !(eltype(X[ft]) <: Real)
+        if !(eltype(X[ft]) <: AbstractFloat)
             for value in scheme.values_given_feature[ft]
                 subft = Symbol(string(ft,"__",value))
 
@@ -433,7 +432,8 @@ end
 ## `struct BoxCoxTransformer`
 
 Transformer for Box-Cox transformations on each numerical feature of a
-`DataFrame` object. Here "numerical" means of eltype `T <: Real`.
+`DataFrame` object. Here "numerical" means of eltype `T <:
+AbstractFloat`.
 
 ### Method calls 
 
@@ -488,7 +488,8 @@ function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
     features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
     feature_is_transformed = Array{Bool}(size(X, 2))
     for j in 1:size(X, 2)
-        if names(X)[j] in features_to_try && eltype(X[j]) <: Real && minimum(X[j]) >= 0
+        if names(X)[j] in features_to_try && eltype(X[j]) <:
+            AbstractFloat && minimum(X[j]) >= 0
             feature_is_transformed[j] = true
         else
             feature_is_transformed[j] = false
@@ -590,8 +591,8 @@ end
 
 Use this transformer to prepare dataframe inputs for use with
 supervised learning algorithms requiring `Matrix{T}` inputs, for
-`T<:Real`. Here `T` is forced to be `Float64`. Includes one-hot
-encoding of categoricals (any feature not of eltype T<:Real) and an
+`T<:AbstractFloat`. Here `T` is forced to be `Float64`. Includes one-hot
+encoding of categoricals (any feature not of eltype T<:AbstractFloat) and an
 option for Box-Cox transformations. Note that all eltypes must admit
 `<` and `string` methods.
 
@@ -776,7 +777,7 @@ function fit(transformer::MakeCategoricalsIntTransformer, X::AbstractDataFrame, 
     types = eltypes(X)
     features = names(X)
     for j in eachindex(types)
-        if !(types[j] <: Real)
+        if !(types[j] <: AbstractFloat)
             push!(categorical_features, features[j])
             push!(schemes, fit(to_int_transformer, X[j], parallel, verbosity))
         end
@@ -797,6 +798,27 @@ end
 
 ## DISCRETIZATION OF CONTINUOUS VARIABLES
 
+"""
+    UnivariateDiscretizer(n_classes=512)
+
+Returns a `Koala.Transformer` for discretizing vectors of `Real`
+eltype, where `n_classes` describes the resolution of the
+discretization. Transformed vectors are of eltype `Int46`. The
+transformation is chosen so that the vector on which the transformer
+is fit has, in transformed form, an approximately uniform distribution
+of values.
+
+### Example
+
+    using Koala
+    using KoalaTransforms
+    t = UnivariateDiscretizer(n_classes=10)
+    v = randn(1000)
+    tM = Machine(t, v)   # fit the transformer on `v`
+    w = transform(tM, v) # transform `v` according to `tM`
+    StatsBase.countmap(w)
+
+"""
 mutable struct UnivariateDiscretizer <: Transformer
     n_classes::Int
 end
@@ -887,6 +909,25 @@ function showall(stream::IO, X::NominalOrdinalIntArray)
     show(stream, MIME("text/plain"), X.A)
 end
 
+"""
+    Discretizer(n_classes=512)
+
+Returns a `Koala.Transformer` for discretizing the columns of a
+`DataFrame`. Transformed objects are of type `NominalOrdinalIntArray`,
+a lightweight wrapper for an `Int64` matrix whose fields `A`,
+`features` and `is_ordinal` store, respectively, the integer matrix, a
+vector of feature names, and a vector recording which features are
+ordinal.
+
+Columns are discretized according to the following conventions: If the
+column eltype is a subtype of `AbstractFloat`, the column is
+discretized using a `UnivariateDiscretizer` transformer. All remaining
+eltypes are treated as nominal, with elements relabeled with integers,
+starting with 1; nominal values not encountered during fitting the
+transformer will throw a `KeyError` if there is an attempt to
+transform them according to the fitted scheme.
+
+"""
 mutable struct Discretizer <: Transformer
     n_classes::Int
     features::Vector{Symbol} # features to be used; empty means all
@@ -904,7 +945,6 @@ end
 function fit(transformer::Discretizer, X::AbstractDataFrame, parallel, verbosity)
 
     to_int = ToIntTransformer(sorted=true)
-    to_int64 = IntegerToInt64Transformer() # just converts type to Int64
     discrete = UnivariateDiscretizer()
 
     if isempty(transformer.features)
@@ -918,15 +958,10 @@ function fit(transformer::Discretizer, X::AbstractDataFrame, parallel, verbosity
     
     j = 1
     for ftr in features
-        if eltype(X[ftr]) <: Real
+        if eltype(X[ftr]) <: AbstractFloat
             is_ordinal[j] = true
-            if eltype(X[ftr]) <: Integer
-                transformer_machines[j] = Machine(to_int64, X[ftr];
+            transformer_machines[j] = Machine(discrete, X[ftr];
                 parallel=false, verbosity=verbosity - 1)
-            else
-                transformer_machines[j] = Machine(discrete, X[ftr];
-                parallel=false, verbosity=verbosity - 1)
-            end
         else
             is_ordinal[j] = false
             transformer_machines[j] = Machine(to_int, X[ftr];
