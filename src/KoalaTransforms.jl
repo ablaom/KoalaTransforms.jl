@@ -194,7 +194,7 @@ function transform(transformer::Standardizer, scheme, X)
     names(X) == scheme.features ||
         error("Attempting to transform data frame with incompatible feature labels.")
 
-    Xnew = copy(X)
+    Xnew = X[1:end,:] # make a copy of X, working even for `SubDataFrames`
     univ_transformer = UnivariateStandardizer()
     for j in 1:size(X, 2)
         if scheme.is_transformed[j]
@@ -562,7 +562,7 @@ function transform(transformer::BoxCoxTransformer, scheme, X::AbstractDataFrame)
     univ_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift,
                                                n=transformer.n)
 
-    Xnew = copy(X)
+    Xnew = X[1:end,:] # make a copy of X
     for j in 1:size(X, 2)
         if scheme.feature_is_transformed[j]
             try
@@ -787,7 +787,7 @@ function fit(transformer::MakeCategoricalsIntTransformer, X::AbstractDataFrame, 
 end
 
 function transform(transformer::MakeCategoricalsIntTransformer, scheme_X, X::AbstractDataFrame)
-    Xt = copy(X)
+    Xt = X[1:end,:] # make a copy of X, working even for `SubDataFrame`s
     for j in eachindex(scheme_X.categorical_features)
         ftr = scheme_X.categorical_features[j]
         Xt[ftr] = transform(scheme_X.to_int_transformer, scheme_X.schemes[j], X[ftr])
