@@ -105,3 +105,19 @@ Xt = transform(tM, X)
 @test Xt.is_ordinal == [true, false, false, false]
 @test Xt.A == [512 1 1 1; 1 2 1 2; 256 3 1 1]
 
+# testing transformer chains:
+
+u = rand(100)
+t = UnivariateBoxCoxTransformer()
+tM = Machine(t, u)
+v = transform(tM, u)
+s = UnivariateStandardizer()
+sM = Machine(s, v)
+w = transform(sM, v)
+
+st = ChainTransformer(s, t)
+stM = Machine(st, u)
+@test w ≈ transform(stM, u)
+
+stM[1]
+stM[2]

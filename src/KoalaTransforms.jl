@@ -1,6 +1,7 @@
 module KoalaTransforms
 
-# new:
+# Univariate:
+export ChainTransformer
 export ToIntTransformer
 export UnivariateStandardizer, Standardizer
 export OneHotEncoder
@@ -35,9 +36,60 @@ import Koala: IdentityTransformer
 # using ADBUtilities
 
 # constants:
-const N_VALUES_THRESH = 16
+const N_VALUES_THRESH = 16 # for BoxCoxTransformation
 
-## Relabelling by consecutive integers starting at 1
+
+## COMPOSITE TRANSFORMERS
+
+mutable struct ChainTransformer <: Transformer
+    chain::Vector{Transformer} # in order applied!
+end
+
+# constructor is given individual transforms in order opposite to that
+# in which they will be applied:
+ChainTransformer(transformers...) = ChainTransformer(reverse(Transformer[transformers...]))
+
+function fit(transformer::ChainTransformer, X::Union{AbstractVector, AbstractDataFrame},
+             parallel, verbosity)
+    schemes = Array{Any}(length(transformer.chain))
+
+    !isempty(transformer.chain) || error("Empty ChainTransformer.")
+
+    # fit first transformer:
+    schemes[1] = fit(transformer.chain[1], X, parallel, verbosity)
+
+    # fit the rest:
+    for i in 2:length(transformer.chain)
+        X = transform(transformer.chain[i - 1], schemes[i - 1], X)
+        schemes[i] = fit(transformer.chain[i], X, parallel, verbosity)
+    end
+
+    return schemes
+end
+
+function transform(transformer::ChainTransformer, schemes, 
+                   X::Union{AbstractVector, AbstractDataFrame})
+    for i in eachindex(schemes)
+        X = transform(transformer.chain[i], schemes[i], X)
+    end
+    return X
+end
+
+function inverse_transform(transformer::ChainTransformer, schemes, 
+                   X::Union{AbstractVector, AbstractDataFrame})
+    for i in reverse(eachindex(schemes))
+        X = inverse_transform(transformer.chain[i], schemes[i], X)
+    end
+    return X
+end
+    
+function Base.getindex(machine::TransformerMachine{ChainTransformer}, i::Int)
+    return TransformerMachine(machine.transformer.chain[end - i + 1],
+                              machine.scheme[end - i + 1], :)
+end
+
+
+## FOR RELABELLING BY CONSECUTIVE INTEGERS STARTING AT 1
 
 mutable struct ToIntTransformer <: Transformer
     sorted::Bool
@@ -291,9 +343,10 @@ function transform(transformer::OneHotEncoder, scheme, X::AbstractDataFrame)
                     subft = Symbol(string(subft,"_"))
                 end
 
-                Xout[subft] = map(X[ft]) do x
+                subft_col = map(X[ft]) do x
                     x == value ? 1.0 : 0.0
-                end 
+                end
+                Xout[subft] = convert(Array{Float64}, subft_col)
             end
         else
             Xout[ft] = X[ft]
@@ -306,7 +359,7 @@ end
 
 ## Univariate Box-Cox transformations
 
-function normalise(v)
+function standardize(v)
     map(v) do x
         (x - mean(v))/std(v)
     end
@@ -319,7 +372,7 @@ end
 function normality(v)
 
     n  = length(v)
-    v = normalise(convert(Vector{Float64}, v))
+    v = standardize(convert(Vector{Float64}, v))
 
     # sort and replace with midpoints
     v = midpoints(sort!(v))
@@ -406,7 +459,7 @@ end
 
 # for X scalar or vector:
 transform(transformer::UnivariateBoxCoxTransformer, scheme, X) =
-    boxcox(scheme..., X) 
+    boxcox(scheme..., X)
 
 # scalar case:
 function inverse_transform(transformer::UnivariateBoxCoxTransformer,
