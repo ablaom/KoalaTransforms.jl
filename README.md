@@ -1,5 +1,12 @@
 # KoalaTransforms
 
+Common data transformations performed in machine learning, for use
+with the [Koala](https://github.com/ablaom/Koala.jl) environment. 
+
+## Installation
+
+Refer to the [Koala](https://github.com/ablaom/Koala.jl) repository.
+
 ## Quickstart
 
 The objects of a concrete subtype of `Transformer` store the
