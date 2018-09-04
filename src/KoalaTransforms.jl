@@ -19,14 +19,15 @@ export transform, inverse_transform, fit # from `Koala`
 export FeatureSelector, IdentityTransformer
 
 # for use in this module:
-import Koala: BaseType, params, type_parameters
+import Koala: BaseType, params
 import Koala: TransformerMachine, Machine
 import DataFrames: names, AbstractDataFrame, DataFrame, eltypes
 import Distributions
+using Statistics
 
 # to be extended:
 import Koala: Transformer, transform, fit, inverse_transform
-import Base: show, showall
+import Base: show
 
 # so above export from Koala works:
 import Koala: EmptyTransformer, FeatureSelector
@@ -51,7 +52,7 @@ ChainTransformer(transformers...) = ChainTransformer(reverse(Transformer[transfo
 
 function fit(transformer::ChainTransformer, X::Union{AbstractVector, AbstractDataFrame},
              parallel, verbosity)
-    schemes = Array{Any}(length(transformer.chain))
+    schemes = Array{Any}(undef, length(transformer.chain))
 
     !isempty(transformer.chain) || error("Empty ChainTransformer.")
 
@@ -167,7 +168,7 @@ struct UnivariateStandardizer <: Transformer end
 function fit(transformer::UnivariateStandardizer, v::AbstractVector{T},
              parallel, verbosity) where T <: Real
     std(v) > eps(Float64) ||
-        warn("Extremely small standard deviation encountered in standardization.")
+        @warn "Extremely small standard deviation encountered in standardization."
     return  mean(v), std(v)
 end
 
@@ -216,7 +217,7 @@ function fit(transformer::Standardizer, X, parallel, verbosity)
     
     # determine indices of features to be transformed
     features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
-    is_transformed = Array{Bool}(size(X, 2))
+    is_transformed = Array{Bool}(undef, size(X, 2))
     for j in 1:size(X, 2)
         if names(X)[j] in features_to_try && eltype(X[j]) <: AbstractFloat
             is_transformed[j] = true
@@ -226,14 +227,14 @@ function fit(transformer::Standardizer, X, parallel, verbosity)
     end
 
     # fit each of those features
-    schemes = Matrix{Float64}(2, size(X, 2))
-    verbosity < 1 || info("Features standarized: ")
+    schemes = Array{Float64}(undef, 2, size(X, 2))
+    verbosity < 1 || @info "Features standarized: "
     univ_transformer = UnivariateStandardizer()
     for j in 1:size(X, 2)
         if is_transformed[j]
             schemes[:,j] = [fit(univ_transformer, collect(X[j]), true, verbosity - 1)...]
             verbosity < 1 ||
-                info("  :$(names(X)[j])    mu=$(schemes[1,j])  sigma=$(schemes[2,j])")
+                @info "  :$(names(X)[j])    mu=$(schemes[1,j])  sigma=$(schemes[2,j])"
         else
             schemes[:,j] = Float64[0.0, 0.0]
         end
@@ -291,7 +292,7 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
     features = names(X)
     values_given_feature = Dict{Symbol, Any}()
 
-    verbosity < 1 || info("One-hot encoding categorical features.")
+    verbosity < 1 || @info "One-hot encoding categorical features."
     
     for ft in features 
         if !(eltype(X[ft]) <: AbstractFloat)
@@ -301,7 +302,7 @@ function fit(transformer::OneHotEncoder, X::AbstractDataFrame, parallel, verbosi
             end
             if verbosity > 1
                 n_values = length(keys(values_given_feature[ft]))
-                info("Spawned $n_values columns to one-hot encode $ft.")
+                @info "Spawned $n_values columns to one-hot encode $ft."
             end
         end  
     end
@@ -453,9 +454,9 @@ function fit(transformer::UnivariateBoxCoxTransformer, v::AbstractVector{T},
                         "Consider calling `fit!` with `shift=true`.")
     end
   
-    lambdas = linspace(-0.4,3,transformer.n)
+    lambdas = range(-0.4, stop=3, length=transformer.n)
     scores = Float64[normality(boxcox(l, c, v)) for l in lambdas]
-    lambda = lambdas[indmax(scores)]
+    lambda = lambdas[argmax(scores)]
 
     return  lambda, c
 
@@ -539,11 +540,11 @@ BoxCoxTransformerScheme() = BoxCoxTransformerScheme(zeros(0,0),Symbol[],Bool[])
 
 function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
 
-    verbosity < 1 || info("Computing Box-Cox transformations "*
-                          "on numerical features.")
+    verbosity < 1 || @info "Computing Box-Cox transformations "*
+                          "on numerical features."
     # determine indices of features to be transformed
     features_to_try = (isempty(transformer.features) ? names(X) : transformer.features)
-    feature_is_transformed = Array{Bool}(size(X, 2))
+    feature_is_transformed = Array{Bool}(undef, size(X, 2))
     for j in 1:size(X, 2)
         if names(X)[j] in features_to_try && eltype(X[j]) <:
             AbstractFloat && minimum(X[j]) >= 0
@@ -554,46 +555,46 @@ function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
     end
 
     # fit each of those features with best Box Cox transformation
-    schemes = Array{Float64}(2, size(X,2))
+    schemes = Array{Float64}(undef, 2, size(X,2))
     univ_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift,
                                                n=transformer.n)
     verbosity < 2 ||
-        info("Box-Cox transformations: ")
+        @info "Box-Cox transformations: "
     for j in 1:size(X,2)
         if feature_is_transformed[j]
             if minimum(X[j]) == 0 && !transformer.shift
                 verbosity < 2 ||
-                    info("  :$(names(X)[j])    "*
-                            "(*not* transformed, contains zero values)")
+                    @info "  :$(names(X)[j])    "*
+                            "(*not* transformed, contains zero values)"
                 feature_is_transformed[j] = false
                 schemes[:,j] = [0.0, 0.0]
             else
                 n_values = length(unique(X[j]))
                 if n_values < N_VALUES_THRESH
                     verbosity < 2 ||
-                        info("  :$(names(X)[j])    "*
-                                "(*not* transformed, less than $N_VALUES_THRESH values)")
+                        @info "  :$(names(X)[j])    "*
+                                "(*not* transformed, less than $N_VALUES_THRESH values)"
                     feature_is_transformed[j] = false
                     schemes[:,j] = [0.0, 0.0]
                 else
                     lambda, c = fit(univ_transformer, collect(X[j]), true, verbosity-1)
                     if lambda in [-0.4, 3]
                         verbosity < 2 ||
-                            info("  :$(names(X)[j])    "*
-                                    "(*not* transformed, lambda too extreme)")
+                            @info "  :$(names(X)[j])    "*
+                                    "(*not* transformed, lambda too extreme)"
                         feature_is_transformed[j] = false
                         schemes[:,j] = [0.0, 0.0]
                     elseif lambda == 1.0
                         verbosity < 2 ||
-                            info("  :$(names(X)[j])    "*
-                                    "(*not* transformed, not skewed)")
+                            @info "  :$(names(X)[j])    "*
+                                    "(*not* transformed, not skewed)"
                         feature_is_transformed[j] = false
                         schemes[:,j] = [0.0, 0.0]
                     else
                         schemes[:,j] = [lambda, c]
                         verbosity <1 ||
-                            info("  :$(names(X)[j])    lambda=$lambda  "*
-                                    "shift=$c")
+                            @info "  :$(names(X)[j])    lambda=$lambda  "*
+                                    "shift=$c"
                     end
                 end
             end
@@ -603,7 +604,7 @@ function fit(transformer::BoxCoxTransformer, X, parallel, verbosity)
     end
 
     if !transformer.shift && verbosity < 1
-        info("To transform non-negative features with zero values use shift=true.")
+        @info "To transform non-negative features with zero values use shift=true."
     end
 
     return BoxCoxTransformerScheme(schemes, names(X), feature_is_transformed)
@@ -628,9 +629,9 @@ function transform(transformer::BoxCoxTransformer, scheme, X::AbstractDataFrame)
 
                 Xnew[j] = transform(univ_transformer, univ_scheme, collect(X[j]))
             catch DomainError
-                warn("Data outside of the domain of the fitted Box-Cox"*
+                @warn "Data outside of the domain of the fitted Box-Cox"*
                       " transformation scheme encountered in feature "*
-                      "$(names(df)[j]). Transformed to zero.")
+                      "$(names(df)[j]). Transformed to zero."
             end
         end
     end
@@ -690,7 +691,7 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
     
     # fit Box-Cox transformation to numerical features:
     if transformer.boxcox
-        verbosity < 1 || info("Determining Box-Cox transformation parameters.")
+        verbosity < 1 || @info "Determining Box-Cox transformation parameters."
         boxcox_transformer = BoxCoxTransformer(shift=transformer.shift)
         boxcox = fit(boxcox_transformer, X, true, verbosity - 1)
         X = transform(boxcox_transformer, boxcox, X)
@@ -699,7 +700,7 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
     end
 
     if transformer.standardize
-        verbosity < 1 || info("Determining standardization parameters.")
+        verbosity < 1 || @info "Determining standardization parameters."
         standardizer = Standardizer()
         stand = fit(standardizer, X, true, verbosity - 1)
         X = transform(standardizer, stand, X)
@@ -707,7 +708,7 @@ function fit(transformer::DataFrameToArrayTransformer, X::AbstractDataFrame, par
         stand = StandardizerScheme() # null scheme
     end
     
-    verbosity < 1 || info("Determining one-hot encodings for data frame categoricals.")
+    verbosity < 1 || @info "Determining one-hot encodings for data frame categoricals."
     hot_transformer = OneHotEncoder(drop_last=transformer.drop_last)
     hot =  fit(hot_transformer, X, true, verbosity - 1) 
     spawned_features = hot.spawned_features 
@@ -769,7 +770,7 @@ end
 function fit(transformer::RegressionTargetTransformer, y, parallel, verbosity)
 
     if transformer.boxcox
-        verbosity < 1 || info("Computing Box-Cox transformations for target.")
+        verbosity < 1 || @info "Computing Box-Cox transformations for target."
         boxcox_transformer = UnivariateBoxCoxTransformer(shift=transformer.shift)
         boxcox = fit(boxcox_transformer, y, true, verbosity - 1)
         y = transform(boxcox_transformer, boxcox, y)
@@ -777,7 +778,7 @@ function fit(transformer::RegressionTargetTransformer, y, parallel, verbosity)
         boxcox = (0.0, 0.0) # null scheme
     end
     if transformer.standardize
-        verbosity < 1 || info("Computing target standardization.")
+        verbosity < 1 || @info "Computing target standardization."
         standard_transformer = UnivariateStandardizer()
         standard = fit(standard_transformer, y, true, verbosity - 1)
     else
@@ -839,7 +840,7 @@ function fit(transformer::MakeCategoricalsIntTransformer, X::AbstractDataFrame, 
             push!(schemes, fit(to_int_transformer, X[j], parallel, verbosity))
         end
     end
-    verbosity < 1 || info("Input features treated as categorical: $categorical_features")
+    verbosity < 1 || @info "Input features treated as categorical: $categorical_features"
     return MakeCategoricalsIntScheme(categorical_features, schemes, to_int_transformer)
 end
 
@@ -890,7 +891,7 @@ end
 
 function fit(transformer::UnivariateDiscretizer, v, parallel, verbosity)
     n_classes = transformer.n_classes
-    quantiles = quantile(v, Array(linspace(0,1,2*n_classes+1)))  
+    quantiles = quantile(v, Array(range(0, stop=1, length=2*n_classes+1)))  
     clipped_quantiles = quantiles[2:2*n_classes] # drop 0% and 100% quantiles
     
     # odd_quantiles for transforming, even_quantiles used for inverse_transforming:
@@ -953,8 +954,8 @@ struct NominalOrdinalIntArray <: BaseType
     is_ordinal::Vector{Bool}
 end
 
-function showall(stream::IO, X::NominalOrdinalIntArray)
-    features_plus = Array{String}(length(X.features))
+function show(stream::IO, ::MIME"text/plain", X::NominalOrdinalIntArray)
+    features_plus = Array{String}(undef, length(X.features))
     for j in eachindex(X.features)
         kind = X.is_ordinal[j] ? "ordinal" : "nominal"
         features_plus[j] = string(X.features[j], " ($kind)  ")
@@ -1010,8 +1011,8 @@ function fit(transformer::Discretizer, X::AbstractDataFrame, parallel, verbosity
         features = transformer.features
     end
 
-    transformer_machines = Array{TransformerMachine}(length(features))
-    is_ordinal = Array{Int}(length(features))
+    transformer_machines = Array{TransformerMachine}(undef, length(features))
+    is_ordinal = Array{Int}(undef, length(features))
     
     j = 1
     for ftr in features
@@ -1037,7 +1038,7 @@ function transform(transformer::Discretizer, scheme, X)
         error("Provided DataFrame with incompatible features.")
 
     n_features = length(scheme.features)
-    A = Array{Int}(size(X, 1), n_features)
+    A = Array{Int}(undef, size(X, 1), n_features)
 
     for j in 1:n_features
         A[:,j] = transform(scheme.transformer_machines[j],

@@ -1,6 +1,6 @@
-using Koala
 using KoalaTransforms
-using Base.Test
+using Koala
+using Test
 using DataFrames
 
 const EPS = eps(Float64)
@@ -8,20 +8,17 @@ const EPS = eps(Float64)
 ## `UnivariateStandardizer`
 
 t = UnivariateStandardizer()
-showall(t)
 tM = Machine(t, [0, 2, 4])
-showall(tM)
 
 @test round.(Int, transform(tM, [0,4,8])) == [-1.0,1.0,3.0]
 @test round.(Int, inverse_transform(tM, [-1, 1, 3])) == [0, 4, 8] 
 
 # create skewed non-negative vector with a zero value:
 v = abs.(randn(1000))
-v = v - minimum(v)
+v = v .- minimum(v)
 KoalaTransforms.normality(v)
 
 t = UnivariateBoxCoxTransformer(shift=true)
-showall(t)
 tM = Machine(t, v)
 @test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
@@ -43,7 +40,7 @@ transformerM = Machine(transformer, [1,2,3,4])
 
 transformer = DataFrameToArrayTransformer(boxcox=true, standardize=true)
 transformerM = Machine(transformer, X)
-transform(transformerM, X)
+transform(transformerM, X);
 
 transformer = RegressionTargetTransformer(standardize=false, boxcox=true)
 transformerM = Machine(transformer, y)
