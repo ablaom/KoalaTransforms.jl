@@ -166,6 +166,8 @@ struct UnivariateStandardizer <: Transformer end
 
 function fit(transformer::UnivariateStandardizer, v::AbstractVector{T},
              parallel, verbosity) where T <: Real
+    std(v) > eps(Float64) ||
+        warn("Extremely small standard deviation encountered in standardization.")
     return  mean(v), std(v)
 end
 
@@ -331,6 +333,8 @@ function transform(transformer::OneHotEncoder, scheme, X::AbstractDataFrame)
 
     Set(names(X)) == Set(scheme.features) ||
         error("Attempting to transform DataFrame with incompatible feature labels.")
+
+    # todo: check matching eltypes
     
     Xout = DataFrame()
     for ft in scheme.features
