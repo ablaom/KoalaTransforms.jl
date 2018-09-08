@@ -23,7 +23,7 @@ tM = Machine(t, v)
 @test sum(abs.(v - inverse_transform(tM,transform(tM, v)))) <= 5000*EPS
 
 const X, y = load_ames();
-const train, test = split(eachindex(y), 0.9);
+const train, test = partition(eachindex(y), 0.9);
 
 # introduce a field of type `Char`:
 X[:OverallQual] = map(Char, X[:OverallQual])

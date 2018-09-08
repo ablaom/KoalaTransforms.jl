@@ -15,8 +15,8 @@ export UnivariateDiscretizer, Discretizer
 # extended:
 export transform, inverse_transform, fit # from `Koala`
 
-# transformers rexported from Koala:
-export FeatureSelector, IdentityTransformer
+# rexported from Koala:
+export FeatureSelector, IdentityTransformer, Machine
 
 # for use in this module:
 import Koala: BaseType, params
