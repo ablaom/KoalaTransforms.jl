@@ -1,0 +1,4 @@
+julia 0.7
+Koala 0.0.2
+DataFrames 0.11.7
+Distributions 0.15.0
