@@ -112,7 +112,7 @@ uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.19.0"
 
 [[Koala]]
-deps = ["CSV", "DataFrames", "Distributed", "HypothesisTests", "RecipesBase", "Statistics", "StatsBase"]
+deps = ["CSV", "DataFrames", "Distributed", "HypothesisTests", "RecipesBase", "Statistics", "StatsBase", "Test"]
 path = "../Koala"
 uuid = "c4f7a666-ae2a-11e8-1374-b535b12dcbb2"
 version = "0.1.0"
